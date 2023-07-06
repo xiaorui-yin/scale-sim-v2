@@ -13,7 +13,7 @@ if __name__ == '__main__':
                         help="Path to the config file"
                         )
     parser.add_argument('-p', metavar='log dir', type=str,
-                        default="../test_runs",
+                        default="./test_runs",
                         help="Path to log dir"
                         )
     parser.add_argument('-i', metavar='input type', type=str,
@@ -31,7 +31,7 @@ if __name__ == '__main__':
     if inp_type == 'gemm':
         gemm_input = True
 
-    s = scalesim(save_disk_space=True, verbose=True,
+    s = scalesim(save_disk_space=False, verbose=True,
                  config=config,
                  topology=topology,
                  input_type_gemm=gemm_input

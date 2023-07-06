@@ -64,9 +64,9 @@ class systolic_compute_ws:
 
         assert ifmap_col == filter_row, "Dimension mismatch between operands"
 
-        self.Sr = self.ifmap_op_mat.shape[1]
-        self.Sc = self.filter_op_mat.shape[1]
-        self.T = self.ifmap_op_mat.shape[0]
+        self.Sr = self.ifmap_op_mat.shape[1]  # window size k_h * k_w * c_i
+        self.Sc = self.filter_op_mat.shape[1]  # c_o
+        self.T = self.ifmap_op_mat.shape[0]  # number of output pixels
 
         self.arr_row, self.arr_col = self.config.get_array_dims()
 
@@ -178,11 +178,14 @@ class systolic_compute_ws:
     def create_ifmap_demand_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
+        # Comments from xyin
+        # clock cycles for weights to be loaded (weights are bumped in from top row)
         inter_fold_gap_prefix = self.arr_row
         inter_fold_gap_prefix_mat = np.ones((inter_fold_gap_prefix, self.arr_row)) * -1
 
-        inter_fold_gap_suffix = self.arr_row + self.arr_col - 2
-        #The last input needs self.arr_row - 1 cycles to reach the last column of PE array and then self.arr_col - 1 cycles to reduce along the last column.
+        #inter_fold_gap_suffix = self.arr_row + self.arr_col - 2
+        inter_fold_gap_suffix = self.arr_col - 1
+        #The last input need self.arr_col - 1 cycles to reduce along the last column.
 
         inter_fold_gap_suffix_mat = np.ones((inter_fold_gap_suffix, self.arr_row)) * -1
 
@@ -196,20 +199,20 @@ class systolic_compute_ws:
                 # See the comment on ifmap_prefetch generation
                 this_fold_demand = self.ifmap_op_mat[:,col_start_id: col_end_idx]
                 self.ifmap_reads += this_fold_demand.shape[0] * this_fold_demand.shape[1]
-
+                
                 # Take into account under utilization
                 if delta > 0:
                     null_req_mat = np.ones((self.T, delta)) * -1
                     this_fold_demand = np.concatenate((this_fold_demand, null_req_mat), axis=1)
 
-                # Account for the cycles for weights to load
-                this_fold_demand = np.concatenate((inter_fold_gap_prefix_mat, this_fold_demand), axis=0)
-
-                # Account for the cycles for final output to drain out
-                this_fold_demand = np.concatenate((this_fold_demand, inter_fold_gap_suffix_mat), axis=0)
-
                 # Add skew to the IFMAP demand matrix to reflect systolic pipeline fill
                 this_fold_demand = skew_matrix(this_fold_demand)
+
+                # Account for the cycles for input to traverse systolic array
+                this_fold_demand = np.concatenate((this_fold_demand, inter_fold_gap_suffix_mat), axis=0)
+
+                # Account for the cycles for weights to load
+                this_fold_demand = np.concatenate((inter_fold_gap_prefix_mat, this_fold_demand), axis=0)
 
                 if fr == 0 and fc == 0:
                     self.ifmap_demand_matrix = this_fold_demand
@@ -221,6 +224,11 @@ class systolic_compute_ws:
     def create_filter_demand_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
+        # Comments from xyin
+        # How many cycles later the next set of filters need to be loaded in
+        # one pixel (need to be accumulated) is calculated (one column for one channel) per clock cycle
+        # clock cycles for all pixels: T - 1
+        # number of cycles needed to fill MAC in last row and last column: arr_row + arr_col - 1
         inter_fold_gap_suffix = self.arr_row + self.arr_col + self.T - 2
         inter_fold_gap_suffix_mat = np.ones((inter_fold_gap_suffix, self.arr_col)) * -1
 
@@ -403,6 +411,9 @@ def skew_matrix(input_matrix_np):
     out_matrix_np = np.zeros((1,1))
     for c in range(cols):
         if c == 0:
+            # Comments from xyin:
+            # each column represents the IFM data needed by each systolic row.
+            # the first column has no data in the last row-1 clock cycles
             down_padding = -1 * np.ones((cols-1, 1))
             mat_col = input_matrix_np[:,c].reshape((rows,1))
             out_matrix_np = np.concatenate((mat_col, down_padding), axis=0)
@@ -416,6 +427,9 @@ def skew_matrix(input_matrix_np):
                 out_matrix_np = np.concatenate((out_matrix_np, this_col), axis=1)
 
             else:
+                # Comments from xyin:
+                # other systolic rows receive data with some delays (= c),
+                # and also have no data in the last row-1 clock cycles
                 up_padding = -1 * np.ones((c, 1))
                 mat_col = input_matrix_np[:, c].reshape((rows, 1))
                 down_padding = -1 * np.ones((cols - c-1, 1))
