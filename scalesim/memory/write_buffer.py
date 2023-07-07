@@ -275,4 +275,4 @@ class write_buffer:
             print('No trace has been generated yet')
             return
         trace_matrix = self.get_trace_matrix()
-        np.savetxt(filename, trace_matrix, fmt='%s', delimiter=",")
+        np.savetxt(filename, trace_matrix, fmt='%d', delimiter=",")

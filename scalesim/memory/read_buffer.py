@@ -421,4 +421,4 @@ class read_buffer:
             print('No trace has been generated yet')
             return
 
-        np.savetxt(filename, self.trace_matrix, fmt='%s', delimiter=",")
+        np.savetxt(filename, self.trace_matrix, fmt='%d', delimiter=",")
