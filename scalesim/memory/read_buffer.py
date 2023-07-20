@@ -34,7 +34,7 @@ class read_buffer:
 
         # Variables to enable prefetching
         self.fetch_matrix = np.ones((1, 1))
-        self.last_prefect_cycle = -1
+        self.last_prefecth_cycle = -1
         self.next_line_prefetch_idx = 0
         self.next_col_prefetch_idx = 0
 
@@ -94,7 +94,7 @@ class read_buffer:
 
         # Variables to enable prefetching
         self.fetch_matrix = np.ones((1, 1))
-        self.last_prefect_cycle = -1
+        self.last_prefecth_cycle = -1
         self.next_line_prefetch_idx = 0
         self.next_col_prefetch_idx = 0
 
@@ -116,26 +116,22 @@ class read_buffer:
 
         num_elems = fetch_matrix_np.shape[0] * fetch_matrix_np.shape[1]
         num_lines = int(math.ceil(num_elems / self.req_gen_bandwidth))
-        self.fetch_matrix = np.ones((num_lines, self.req_gen_bandwidth)) * -1
 
-        # Put stuff into the fetch matrix
-        # This is done to ensure that there is no shape mismatch
-        # Not sure if this is the optimal way to do it or not
-        for i in range(num_elems):
-            src_row = math.floor(i / fetch_matrix_np.shape[1])
-            src_col = math.floor(i % fetch_matrix_np.shape[1])
-
-            dest_row = math.floor(i / self.req_gen_bandwidth)
-            dest_col = math.floor(i % self.req_gen_bandwidth)
-
-            self.fetch_matrix[dest_row][dest_col] = fetch_matrix_np[src_row][src_col]
+        self.fetch_matrix = np.resize(fetch_matrix_np, (num_lines, self.req_gen_bandwidth))
+        
+        # 'resize' fills additional elements with repeated values, we need to set it to -1
+        end_col_idx = num_elems % self.req_gen_bandwidth
+        if end_col_idx != 0:
+            for idx in range(end_col_idx, self.req_gen_bandwidth):
+                self.fetch_matrix[-1, idx] = -1
 
         # Once the fetch matrices are set, populate the data structure for fast lookups and servicing
         self.prepare_hashed_buffer()
 
     #
     def prepare_hashed_buffer(self):
-        elems_per_set = math.ceil(self.total_size_elems / 100)
+        # elems_per_set = math.ceil(self.total_size_elems / 100)
+        elems_per_set = min(self.active_buf_size, self.prefetch_buf_size)
 
         prefetch_rows = self.fetch_matrix.shape[0]
         prefetch_cols = self.fetch_matrix.shape[1]
@@ -236,8 +232,8 @@ class read_buffer:
                 # Fixing for ISSUE #14
                 # if not self.active_buffer_hit(addr):  # --> While loop ensures multiple prefetches if needed
                 while not self.active_buffer_hit(addr):
-                    self.new_prefetch()
-                    potential_stall_cycles = self.last_prefect_cycle - (cycle + offset)
+                    self.new_prefetch(cycle)
+                    potential_stall_cycles = self.last_prefecth_cycle - (cycle + offset)
                     offset += potential_stall_cycles        # Offset increments if there were potential stalls
 
             out_cycles = cycle + offset
@@ -253,10 +249,12 @@ class read_buffer:
         # Also, calculate the cycles arr for requests
 
         # 1. Preparing the requests:
+        # How many SRAM read req are needed to fill active_buffer
         num_lines = math.ceil(self.active_buf_size / self.req_gen_bandwidth)
         if not num_lines < self.fetch_matrix.shape[0]:
             num_lines = self.fetch_matrix.shape[0]
 
+        # How many data are read
         requested_data_size = num_lines * self.req_gen_bandwidth
         self.num_access += requested_data_size
 
@@ -287,7 +285,7 @@ class read_buffer:
                                                                 incoming_requests_arr_np=prefetch_requests)
 
         # 4. Update the variables
-        self.last_prefect_cycle = int(response_cycles_arr[-1][0])
+        self.last_prefecth_cycle = int(response_cycles_arr[-1][0])
 
         # Update the trace matrix
         self.trace_matrix = np.concatenate((response_cycles_arr, prefetch_requests), axis=1)
@@ -306,13 +304,15 @@ class read_buffer:
 
         # Set the line to be prefetched next
         # The module operator is to ensure that the indices wrap around
-        if requested_data_size > self.active_buf_size:  # Some elements in the current idx is left out in this case
+        if requested_data_size > self.active_buf_size:
             self.next_line_prefetch_idx = num_lines % self.fetch_matrix.shape[0]
+            raise AssertionError("Not yet implemented")
         else:
-            self.next_line_prefetch_idx = (num_lines + 1) % self.fetch_matrix.shape[0]
+            # self.next_line_prefetch_idx = (num_lines + 1) % self.fetch_matrix.shape[0]
+            self.next_line_prefetch_idx = (end_idx + 1) % self.fetch_matrix.shape[0]
 
     #
-    def new_prefetch(self):
+    def new_prefetch(self, cur_cycle):
         # In a new prefetch, some portion of the original data needs to be deleted to accomodate the prefetched data
         # In this case we overwrite some data in the active buffer with the prefetched data
         # And then create a new prefetch request
@@ -364,14 +364,16 @@ class read_buffer:
         for i in range(cycles_arr.shape[0]):
             # Fixing ISSUE #14
             # cycles_arr[i][0] = self.last_prefect_cycle + i
-            cycles_arr[i][0] = self.last_prefect_cycle + i + 1
+            # cycles_arr[i][0] = self.last_prefect_cycle + i + 1
+            cycles_arr[i][0] = cur_cycle + i + 1
 
         # 4. Send the request
         response_cycles_arr = self.backing_buffer.service_reads(incoming_cycles_arr=cycles_arr,
                                                                 incoming_requests_arr_np=prefetch_requests)
 
         # 5. Update the variables
-        self.last_prefect_cycle = response_cycles_arr[-1][0]
+        # The time the last prefetch finished
+        self.last_prefecth_cycle = response_cycles_arr[-1][0]
 
         assert response_cycles_arr.shape == cycles_arr.shape, 'The request and response cycles dims do not match'
 
@@ -381,8 +383,10 @@ class read_buffer:
         # Set the line to be prefetched next
         if requested_data_size > self.active_buf_size:
             self.next_line_prefetch_idx = num_lines % self.fetch_matrix.shape[0]
+            raise AssertionError("Not yet implemented")
         else:
-            self.next_line_prefetch_idx = (num_lines + 1) % self.fetch_matrix.shape[1]
+            # self.next_line_prefetch_idx = (num_lines + 1) % self.fetch_matrix.shape[0]
+            self.next_line_prefetch_idx = end_idx % self.fetch_matrix.shape[0]
 
         # This does not need to return anything
 
@@ -421,4 +425,4 @@ class read_buffer:
             print('No trace has been generated yet')
             return
 
-        np.savetxt(filename, self.trace_matrix, fmt='%s', delimiter=",")
+        np.savetxt(filename, self.trace_matrix, fmt='%d', delimiter=",")

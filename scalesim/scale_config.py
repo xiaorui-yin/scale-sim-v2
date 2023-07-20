@@ -11,6 +11,7 @@ class scale_config:
         # Anand: ISSUE #2. Patch
         self.use_user_bandwidth = False
 
+        self.num_core = 4
         self.array_rows = 4
         self.array_cols = 4
         self.ifmap_sz_kb = 256
@@ -53,6 +54,7 @@ class scale_config:
             return
 
         section = 'architecture_presets'
+        self.num_core = int(config.get(section, 'NumCore'))
         self.array_rows = int(config.get(section, 'ArrayHeight'))
         self.array_cols = int(config.get(section, 'ArrayWidth'))
         self.ifmap_sz_kb = int(config.get(section, 'ifmapsramszkB'))
@@ -116,27 +118,28 @@ class scale_config:
                   "Incompatible number of elements in the list")
 
         self.run_name = conf_list[0]
-        self.array_rows = int(conf_list[1])
-        self.array_cols = int(conf_list[2])
-        self.ifmap_sz_kb = int(conf_list[3])
-        self.filter_sz_kb = int(conf_list[4])
-        self.ofmap_sz_kb = int(conf_list[5])
-        self.ifmap_offset = int(conf_list[6])
-        self.filter_offset = int(conf_list[7])
-        self.ofmap_offset = int(conf_list[8])
-        self.df = conf_list[9]
-        bw_mode_string = str(conf_list[10])
+        self.num_core = int(conf_list[1])
+        self.array_rows = int(conf_list[2])
+        self.array_cols = int(conf_list[3])
+        self.ifmap_sz_kb = int(conf_list[4])
+        self.filter_sz_kb = int(conf_list[5])
+        self.ofmap_sz_kb = int(conf_list[6])
+        self.ifmap_offset = int(conf_list[7])
+        self.filter_offset = int(conf_list[8])
+        self.ofmap_offset = int(conf_list[9])
+        self.df = conf_list[10]
+        bw_mode_string = str(conf_list[11])
 
         assert bw_mode_string in ['CALC', 'USER'], 'Invalid mode of operation'
         if bw_mode_string == "USER":
-            assert not len(conf_list) < 12, 'The user bandwidth needs to be provided'
-            self.bandwidths = conf_list[11]
+            assert not len(conf_list) < 13, 'The user bandwidth needs to be provided'
+            self.bandwidths = conf_list[12]
             self.use_user_bandwidth = True
         elif bw_mode_string == 'CALC':
             self.use_user_bandwidth = False
 
-        if len(conf_list) > 12:
-            self.memory_banks = conf_list[12]
+        if len(conf_list) > 13:
+            self.memory_banks = conf_list[13]
         else:
             self.memory_banks = 1
 
@@ -144,13 +147,13 @@ class scale_config:
             assert len(self.bandwidths) == self.memory_banks, 'Bandwidths and num banks dont match'
 
         if self.memory_banks > 1:
-            assert not len(conf_list) < 14, 'Memory maps should be provided'
-            self.memory_map = conf_list[13]
+            assert not len(conf_list) < 15, 'Memory maps should be provided'
+            self.memory_map = conf_list[14]
 
             assert len(self.memory_map) == self.memory_banks, 'Each bank should have an unique map'
 
-        if len(conf_list) == 15:
-            self.topofile = conf_list[14]
+        if len(conf_list) == 16:
+            self.topofile = conf_list[15]
 
         self.valid_conf_flag = True
 
@@ -168,6 +171,7 @@ class scale_config:
 
         section = 'architecture_presets'
         config.add_section(section)
+        config.set(section, 'NumCore', str(self.num_core))
         config.set(section, 'ArrayHeight', str(self.array_rows))
         config.set(section, 'ArrayWidth', str(self.array_cols))
 
@@ -205,7 +209,8 @@ class scale_config:
             self.memory_map.scale_single_bank_params(num_layers=num_layers)
 
     #
-    def set_arr_dims(self, rows=1, cols=1):
+    def set_arr_dims(self, core=1, rows=1, cols=1):
+        self.num_core = core
         self.array_rows = rows
         self.array_cols = cols
 
@@ -262,6 +267,7 @@ class scale_config:
 
         out_list.append(str(self.run_name))
 
+        out_list.append(str(self.num_core))
         out_list.append(str(self.array_rows))
         out_list.append(str(self.array_cols))
 
@@ -312,7 +318,7 @@ class scale_config:
 
     def get_array_dims(self):
         if self.valid_conf_flag:
-            return self.array_rows, self.array_cols
+            return self.num_core, self.array_rows, self.array_cols
 
     def get_mem_sizes(self):
         me = 'scale_config.' + 'get_mem_sizes()'

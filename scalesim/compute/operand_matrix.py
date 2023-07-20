@@ -19,6 +19,8 @@ class operand_matrix(object):
         self.filter_rows, self.filter_cols = 1, 1
         self.num_input_channels, self.num_filters = 1, 1
         self.row_stride, self.col_stride = 1, 1
+        self.pad_t, self.pad_r, self.pad_b, self.pad_l = 0, 0, 0, 0
+        self.dw_flag = False
         self.batch_size = 1
 
         #  Derived hyper parameters
@@ -65,6 +67,10 @@ class operand_matrix(object):
         self.num_input_channels = self.topoutil.get_layer_num_channels(self.layer_id)
         self.num_filters = self.topoutil.get_layer_num_filters(self.layer_id)
         self.row_stride, self.col_stride = self.topoutil.get_layer_strides(self.layer_id)
+        paddings = self.topoutil.get_layer_paddings(self.layer_id)
+        self.pad_t, self.pad_r, self.pad_b, self.pad_l = paddings[0], paddings[1], paddings[2], paddings[3]
+        self.dw_flag = self.topoutil.get_layer_dw_flag(self.layer_id)
+
         # TODO: Marked for cleanup
         #self.row_stride = layer_hyper_param_arr[6]
         #if len(layer_hyper_param_arr) == 8:
@@ -83,7 +89,11 @@ class operand_matrix(object):
         self.ofmap_rows, self.ofmap_cols = self.topoutil.get_layer_ofmap_dims(self.layer_id)
         self.ofmap_rows = int(self.ofmap_rows)
         self.ofmap_cols = int(self.ofmap_cols)
+
         self.ofmap_px_per_filt = int(self.ofmap_rows * self.ofmap_cols)
+        if self.dw_flag:
+            self.ofmap_px_per_filt = int(self.ofmap_rows * self.ofmap_cols * self.num_input_channels)
+
         self.conv_window_size = int(self.topoutil.get_layer_window_size(self.layer_id))
 
         # Assign the offsets
@@ -94,6 +104,7 @@ class operand_matrix(object):
         self.ifmap_addr_matrix = np.ones((self.ofmap_px_per_filt * self.batch_size, self.conv_window_size), dtype='>i4')
         self.filter_addr_matrix = np.ones((self.conv_window_size, self.num_filters), dtype='>i4')
         self.ofmap_addr_matrix = np.ones((self.ofmap_px_per_filt, self.num_filters), dtype='>i4')
+
         self.params_set_flag = True
 
         # TODO: This should be called from top level
@@ -144,38 +155,67 @@ class operand_matrix(object):
                 self.ifmap_addr_matrix[row_idx][col_idx] = self.calc_ifmap_elem_addr(i=row_idx, j=col_idx)
         return 0
 
-    # logic to translate ifmap into matrix fed into systolic array MACs
+    # For each convolution window, calculate the index of the IFM element in HWC format
+    # i is the window index
+    # j is the element index within the window
     def calc_ifmap_elem_addr(self, i, j):
         offset = self.ifmap_offset
         ifmap_cols = self.ifmap_cols
         filter_col = self.filter_cols
+        filter_row = self.filter_rows
         r_stride = self.row_stride
         c_stride = self.col_stride
         Ew = self.ofmap_cols
         channel = self.num_input_channels
 
-        # Calculate the row and col in the Eh X Ew mat
-        ofmap_row = int(math.floor(i / Ew))
-        ofmap_col = int(i % Ew)
+        if not self.dw_flag:
+            # Calculate the row and col in the Eh X Ew mat
+            ofmap_row = int(math.floor(i / Ew))
+            ofmap_col = int(i % Ew)
 
-        # Change this to corresponding ifmap row col for the start of the conv window
-        i_row = ofmap_row * r_stride
-        i_col = ofmap_col * c_stride
+            # which channel
+            channel_idx = int(j % channel)
+            # which row within the window
+            row_idx = int(j // (filter_col * channel))
+            # which col within the window
+            col_idx = int((j % (filter_col * channel)) // channel)
 
-        # Starting address of the convolution window
-        window_addr = i_row * ifmap_cols * channel + i_col * channel
-
-        # Calculate the row and col in the conv window
-        c_row = int(math.floor(j / (filter_col * channel)))
-        k = int(j % (filter_col * channel))
-        c_col = int(math.floor(k / channel))
-        c_ch = int(k % channel)
-        if c_row + i_row >= self.ifmap_rows or c_col + i_col >= self.ifmap_cols:  # for padded address
-            ifmap_px_addr = -1
+            # If this is the padded position
+            if ofmap_row == 0 and row_idx < self.pad_t or \
+               ofmap_row == self.ofmap_rows - 1 and row_idx >= filter_row - self.pad_b or \
+               ofmap_col == 0 and col_idx < self.pad_l or \
+               ofmap_col == self.ofmap_cols - 1 and col_idx >= filter_col - self.pad_r:
+                return -1
+            else:
+                # Change this to corresponding ifmap row col for the start of the conv window
+                i_row = ofmap_row * r_stride - self.pad_t + row_idx
+                i_col = ofmap_col * c_stride - self.pad_l + col_idx
+                return i_row * ifmap_cols * channel + i_col * channel + channel_idx + offset
         else:
-            internal_address = c_row * (ifmap_cols * channel) + c_col * channel + c_ch  # Address inside conv window
-            ifmap_px_addr = internal_address + window_addr + offset  # Global address
-        return ifmap_px_addr
+            # depthwise conv
+
+            # Calculate the row and col in the Eh X Ew mat
+            ofmap_row = int(math.floor(i / (Ew * channel)))
+            ofmap_col = int((i % (Ew * channel)) // channel)
+
+            # which channel
+            channel_idx = int(i % channel)
+            # which row within the window
+            row_idx = int(j // filter_col)
+            # which col within the window
+            col_idx = int(j % filter_col)
+
+            # If this is the padded position
+            if ofmap_row == 0 and row_idx < self.pad_t or \
+               ofmap_row == self.ofmap_rows - 1 and row_idx >= filter_row - self.pad_b or \
+               ofmap_col == 0 and col_idx < self.pad_l or \
+               ofmap_col == self.ofmap_cols - 1 and col_idx >= filter_col - self.pad_r:
+                 return -1
+            else:
+                # Change this to corresponding ifmap row col for the start of the conv window
+                i_row = ofmap_row * r_stride - self.pad_t + row_idx
+                i_col = ofmap_col * c_stride - self.pad_l + col_idx
+                return i_row * ifmap_cols * channel + i_col * channel + channel_idx + offset
 
     # creates the ofmap operand
     def create_ofmap_matrix(self):
@@ -220,8 +260,13 @@ class operand_matrix(object):
         filter_row = self.filter_rows
         filter_col = self.filter_cols
         channel = self.num_input_channels
-        internal_address = j * filter_row * filter_col * channel + i
-        filter_px_addr = internal_address + offset
+
+        if not self.dw_flag:
+            internal_address = j * filter_row * filter_col * channel + i
+            filter_px_addr = internal_address + offset
+        else:
+            internal_address = j * filter_row * filter_col + i
+            filter_px_addr = internal_address + offset
         return filter_px_addr
 
     # function to get a part or the full ifmap operand

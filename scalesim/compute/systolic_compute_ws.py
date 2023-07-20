@@ -109,6 +109,16 @@ class systolic_compute_ws:
         # Fixing ISSUE #15, #16
         # Roll out the matrices along the diagonal to account for temporal locality when there is a skew in demand
 
+        # Comments from xyin
+        # ifmap_prefetch_matrix
+        # [0 2 5 9 14    ...]
+        # [1 4 8 13 19   ...]
+        # [3 7 12 18 25  ...]
+        # [6 11 17 24 32 ...]
+
+        # prefetches = [0 1 2 3 4 5 6 7 8 9 10 11 ...]
+        # this is the oder that systolic array requires, for npu, we need a new order (or keep the default order)
+
         M, N = self.ifmap_prefetch_matrix.shape
         num_elems = M * N
         num_diags = M + N
@@ -285,6 +295,8 @@ class systolic_compute_ws:
     def create_ofmap_demand_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
+        # Comments from xyin
+        # arr_row (weight) + arr_row (ifmap) - 1
         inter_fold_gap_prefix = 2 * self.arr_row - 1
         inter_fold_gap_prefix_mat = np.ones((inter_fold_gap_prefix, self.arr_col)) * -1
 

@@ -6,6 +6,8 @@ from scalesim.compute.operand_matrix import operand_matrix as opmat
 from scalesim.compute.systolic_compute_os import systolic_compute_os
 from scalesim.compute.systolic_compute_ws import systolic_compute_ws
 from scalesim.compute.systolic_compute_is import systolic_compute_is
+from scalesim.compute.npu_compute_ws import npu_compute_ws
+from scalesim.compute.npu_compute_conv import npu_compute_conv
 from scalesim.memory.double_buffered_scratchpad_mem import double_buffered_scratchpad as mem_dbsp
 
 
@@ -16,7 +18,7 @@ class single_layer_sim:
         self.config = cfg()
 
         self.op_mat_obj = opmat()
-        self.compute_system = systolic_compute_os()
+        self.compute_system = npu_compute_ws()
         self.memory_system = mem_dbsp()
 
         self.verbose = True
@@ -86,13 +88,13 @@ class single_layer_sim:
         if self.dataflow == 'os':
             self.compute_system = systolic_compute_os()
         elif self.dataflow == 'ws':
-            self.compute_system = systolic_compute_ws()
+            self.compute_system = npu_compute_ws()
         elif self.dataflow == 'is':
             self.compute_system = systolic_compute_is()
 
-        arr_dims =self.config.get_array_dims()
-        self.num_mac_unit = arr_dims[0] * arr_dims[1]
-        self.verbose=verbose
+        arr_dims = self.config.get_array_dims()
+        self.num_mac_unit = arr_dims[0] * arr_dims[1] * arr_dims[2]
+        self.verbose = verbose
 
         self.params_set_flag = True
 
@@ -115,11 +117,33 @@ class single_layer_sim:
         self.num_compute = self.topo.get_layer_num_ofmap_px(self.layer_id) \
                            * self.topo.get_layer_window_size(self.layer_id)
 
+        ifm_mm, filter_mm = self.topo.get_layer_mapping_mode(self.layer_id)
+        dw_flag = self.topo.get_layer_dw_flag(self.layer_id)
+
+        out_col, out_row = self.topo.get_layer_ofmap_dims(self.layer_id)
         # 1.2 Get the prefetch matrices for both operands
-        self.compute_system.set_params(config_obj=self.config,
-                                       ifmap_op_mat=ifmap_op_mat,
-                                       filter_op_mat=filter_op_mat,
-                                       ofmap_op_mat=ofmap_op_mat)
+        if self.topo.get_layer_conv_flag(self.layer_id):
+            self.compute_system = npu_compute_conv()
+            f_w, f_h = self.topo.get_filter_size(self.layer_id)
+            filter_size = f_w * f_h
+            self.compute_system.set_params(config_obj=self.config,
+                                           ifm_mm=ifm_mm,
+                                           filter_mm=filter_mm,
+                                           filter_size=filter_size,
+                                           dw_flag=dw_flag,
+                                           out_col=out_col,
+                                           ifmap_op_mat=ifmap_op_mat,
+                                           filter_op_mat=filter_op_mat,
+                                           ofmap_op_mat=ofmap_op_mat)
+        else:
+            self.compute_system.set_params(config_obj=self.config,
+                                           ifm_mm=ifm_mm,
+                                           filter_mm=filter_mm,
+                                           dw_flag=dw_flag,
+                                           out_col=out_col,
+                                           ifmap_op_mat=ifmap_op_mat,
+                                           filter_op_mat=filter_op_mat,
+                                           ofmap_op_mat=ofmap_op_mat)
 
         # 1.3 Get the no compute demand matrices from for 2 operands and the output
         ifmap_prefetch_mat, filter_prefetch_mat = self.compute_system.get_prefetch_matrices()
@@ -133,9 +157,12 @@ class single_layer_sim:
             active_buf_frac = 0.5   # This can be incorporated in the config as well
 
             ifmap_buf_size_kb, filter_buf_size_kb, ofmap_buf_size_kb = self.config.get_mem_sizes()
-            ifmap_buf_size_bytes = 1024 * ifmap_buf_size_kb
-            filter_buf_size_bytes = 1024 * filter_buf_size_kb
-            ofmap_buf_size_bytes = 1024 * ofmap_buf_size_kb
+            # ifmap_buf_size_bytes = 1024 * ifmap_buf_size_kb
+            # filter_buf_size_bytes = 1024 * filter_buf_size_kb
+            # ofmap_buf_size_bytes = 1024 * ofmap_buf_size_kb
+            ifmap_buf_size_bytes = ifmap_buf_size_kb
+            filter_buf_size_bytes = filter_buf_size_kb
+            ofmap_buf_size_bytes = ofmap_buf_size_kb
 
             ifmap_backing_bw = 1
             filter_backing_bw = 1
@@ -143,19 +170,23 @@ class single_layer_sim:
             estimate_bandwidth_mode = False
             if self.config.use_user_dram_bandwidth():
                 bws = self.config.get_bandwidths_as_list()
-                ifmap_backing_bw = bws[0]
-                filter_backing_bw = bws[0]
-                ofmap_backing_bw = bws[0]
+                # TODO use config to pass or use multi-bank
+                ifmap_backing_bw = 160
+                filter_backing_bw = 32
+                ofmap_backing_bw = 64
+                # ifmap_backing_bw = bws[0]
+                # filter_backing_bw = bws[0]
+                # ofmap_backing_bw = bws[0]
 
             else:
                 dataflow = self.config.get_dataflow()
-                arr_row, arr_col = self.config.get_array_dims()
+                num_cores, arr_row, arr_col = self.config.get_array_dims()
                 estimate_bandwidth_mode = True
 
                 # The number 10 elems per cycle is arbitrary
                 ifmap_backing_bw = 10
                 filter_backing_bw = 10
-                ofmap_backing_bw = arr_col
+                ofmap_backing_bw = num_cores * arr_col
 
             self.memory_system.set_params(
                     word_size=word_size,
@@ -213,7 +244,7 @@ class single_layer_sim:
         self.total_cycles = self.memory_system.get_total_compute_cycles()
         self.stall_cycles = self.memory_system.get_stall_cycles()
         self.overall_util = (self.num_compute * 100) / (self.total_cycles * self.num_mac_unit)
-        self.mapping_eff = self.compute_system.get_avg_mapping_efficiency() * 100
+        # self.mapping_eff = self.compute_system.get_avg_mapping_efficiency() * 100
         self.compute_util = self.compute_system.get_avg_compute_utilization() * 100
 
         # BW report
@@ -260,7 +291,7 @@ class single_layer_sim:
         if not self.report_items_ready:
             self.calc_report_data()
 
-        items = [self.total_cycles, self.stall_cycles, self.overall_util, self.mapping_eff, self.compute_util]
+        items = [self.total_cycles, self.stall_cycles, self.overall_util, self.compute_util]
         return items
 
     #

@@ -95,6 +95,7 @@ class topologies(object):
             else:
                 elems = row.split(',')[:-1]
                 # depth-wise convolution
+                # Simply repeat every channel. TODO not enough for our simulator
                 if 'DP' in elems[0].strip():
                     for dp_layer in range(int(elems[5].strip())):
                         layer_name = elems[0].strip() + "Channel_" + str(dp_layer)
@@ -155,10 +156,22 @@ class topologies(object):
         entry = [layer_name]
 
         for i in range(1, len(elems)):
-            val = int(str(elems[i]).strip())
-            entry.append(val)
-            if i == 7 and len(elems) < 9:
-                entry.append(val)  # Add the same stride in the col direction automatically
+            val = str(elems[i]).strip()
+            if i in range(1, 9):
+                if i == 7:  # TODO support user defined strides
+                    val = int(val)
+                    # stride_w
+                    entry.append(val)
+                    # stride_h
+                    entry.append(val)
+                elif i == 8:
+                    # pad_t pad_l pad_b pad_r
+                    entry.append([int(x) for x in val.strip('[]').split()])
+                else:
+                    val = int(val)
+                    entry.append(val)
+            elif i >= 9:
+                entry.append(val)
 
         # ISSUE #9 Fix
         assert entry[3] <= entry[1], 'Filter height cannot be larger than IFMAP height'
@@ -206,11 +219,32 @@ class topologies(object):
             num_filt = array[6]
             stride_h = array[7]
             stride_w = array[8]
-            ofmap_h = int(math.ceil((ifmap_h - filt_h + stride_h) / stride_h))
-            ofmap_w = int(math.ceil((ifmap_w - filt_w + stride_w) / stride_w))
-            num_mac = ofmap_h * ofmap_w * filt_h * filt_w * num_ch * num_filt
-            window_size = filt_h * filt_w * num_ch
-            entry = [ofmap_h, ofmap_w, num_mac, window_size]
+            paddings = array[9]
+            depthwise = array[12]
+            pad_t = paddings[0]
+            pad_l = paddings[1]
+            pad_b = paddings[2]
+            pad_r = paddings[3]
+            # ofmap_h = int(math.ceil((ifmap_h - filt_h + stride_h) / stride_h))
+            # ofmap_w = int(math.ceil((ifmap_w - filt_w + stride_w) / stride_w))
+            ofmap_h = int((ifmap_h - filt_h + pad_t + pad_b) / stride_h + 1)
+            ofmap_w = int((ifmap_w - filt_w + pad_r + pad_l) / stride_w + 1)
+            assert ((ifmap_h - filt_h + pad_t + pad_b) / stride_h).is_integer() and \
+                   ((ifmap_w - filt_w + pad_r + pad_l) / stride_w).is_integer(), \
+                   'Incorrect paddings'
+
+            num_mac = 0
+            window_size = 0
+            if depthwise == 'true':
+                num_mac = ofmap_h * ofmap_w * filt_h * filt_w * num_ch
+                window_size = filt_h * filt_w
+            elif depthwise == 'false' or depthwise == 'others':
+                num_mac = ofmap_h * ofmap_w * filt_h * filt_w * num_ch * num_filt
+                window_size = filt_h * filt_w * num_ch
+            else:
+                raise ValueError('Invalid depthwise value (false, true, others)')
+
+            entry = [ofmap_h, ofmap_w, num_mac, window_size, filt_h, filt_w]
             self.layers_calculated_hyperparams.append(entry)
         self.topo_calc_hyper_param_flag = True
 
@@ -316,6 +350,43 @@ class topologies(object):
         layer_params = self.topo_arrays[layer_id]
         return layer_params[7:9]
 
+    def get_layer_mapping_mode(self, layer_id=0):
+        if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
+            print("ERROR: topologies.get_layer_params: Invalid layer id")
+            return
+        ifm_mm = self.topo_arrays[layer_id][10]
+        filter_mm = self.topo_arrays[layer_id][11]
+
+        return ifm_mm, filter_mm
+
+    def get_layer_paddings(self, layer_id=0):
+        if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
+            print("ERROR: topologies.get_layer_paddings: Invalid layer id")
+
+        paddings = self.topo_arrays[layer_id][9]
+        return paddings
+
+    def get_layer_dw_flag(self, layer_id=0):
+        if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
+            print("ERROR: topologies.get_layer_dw_flag: Invalid layer id")
+
+        dw_flag = self.topo_arrays[layer_id][12] == 'true'
+        return dw_flag
+
+    def get_layer_conv_flag(self, layer_id=0):
+        if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
+            print("ERROR: topologies.get_layer_conv_flag: Invalid layer id")
+
+        conv_flag = self.topo_arrays[layer_id][12] == 'others'
+        return conv_flag
+
+    def get_filter_size(self, layer_id=0):
+        if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
+            print("ERROR: topologies.get_filter_size: Invalid layer id")
+        if not self.topo_calc_hyper_param_flag:
+            self.topo_calc_hyperparams()
+        layer_calc_params = self.layers_calculated_hyperparams[layer_id]
+        return layer_calc_params[4], layer_calc_params[5]
 
     def get_layer_window_size(self, layer_id=0):
         if not (self.topo_load_flag or self.num_layers - 1 < layer_id):

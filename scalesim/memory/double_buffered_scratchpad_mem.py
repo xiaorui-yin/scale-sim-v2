@@ -520,17 +520,17 @@ class double_buffered_scratchpad:
         #
     def print_ifmap_sram_trace(self, filename):
         assert self.traces_valid, 'Traces not generated yet'
-        np.savetxt(filename, self.ifmap_trace_matrix, fmt='%i', delimiter=",")
+        np.savetxt(filename, self.ifmap_trace_matrix, fmt='%d', delimiter=",")
 
     #
     def print_filter_sram_trace(self, filename):
         assert self.traces_valid, 'Traces not generated yet'
-        np.savetxt(filename, self.filter_trace_matrix, fmt='%i', delimiter=",")
+        np.savetxt(filename, self.filter_trace_matrix, fmt='%d', delimiter=",")
 
     #
     def print_ofmap_sram_trace(self, filename):
         assert self.traces_valid, 'Traces not generated yet'
-        np.savetxt(filename, self.ofmap_trace_matrix, fmt='%i', delimiter=",")
+        np.savetxt(filename, self.ofmap_trace_matrix, fmt='%d', delimiter=",")
 
     #
     def print_ifmap_dram_trace(self, filename):

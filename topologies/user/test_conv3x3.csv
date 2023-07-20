@@ -1,0 +1,12 @@
+Layer name, IFMAP Height, IFMAP Width, Filter Height, Filter Width, Channels, Num Filter, Strides, Paddings, IFMAP Mapping Mode, Filter Mapping Mode, Depthwise
+YoloV3_0, 416, 416, 3, 3, 32, 64, 2, [1 1 0 0], unicast, broadcast, others,
+YoloV3_1, 208, 208, 3, 3, 32, 64, 1, [1 1 1 1], unicast, broadcast, others,
+YoloV3_2, 208, 208, 3, 3, 64, 128, 2, [1 1 0 0], unicast, broadcast, others,
+YoloV3_3, 104, 104, 3, 3, 64, 128, 1, [1 1 1 1], unicast, broadcast, others,
+YoloV3_4, 104, 104, 3, 3, 128, 256, 2, [1 1 0 0], unicast, broadcast, others,
+YoloV3_5, 52, 52, 3, 3, 128, 256, 1, [1 1 1 1], unicast, broadcast, others,
+YoloV3_6, 52, 52, 3, 3, 256, 512, 2, [1 1 0 0], unicast, broadcast, others,
+YoloV3_7, 26, 26, 3, 3, 256, 512, 1, [1 1 1 1], unicast, broadcast, others,
+YoloV3_8, 26, 26, 3, 3, 512, 1024, 2, [1 1 0 0], unicast, broadcast, others,
+YoloV3_9, 13, 13, 3, 3, 512, 1024, 1, [1 1 1 1], unicast, broadcast, others,
+YoloV3_10, 13, 13, 3, 3, 256, 512, 1, [1 1 1 1], unicast, broadcast, others,

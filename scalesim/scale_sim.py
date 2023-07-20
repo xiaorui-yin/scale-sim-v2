@@ -125,8 +125,8 @@ class scalesim:
         print("******************* SCALE SIM **********************")
         print("====================================================")
 
-        arr_h, arr_w = self.config.get_array_dims()
-        print("Array Size: \t" + str(arr_h) + "x" + str(arr_w))
+        num_arr, arr_h, arr_w = self.config.get_array_dims()
+        print("Array Size: \t" + str(num_arr) + "x" + str(arr_h) + "x" + str(arr_w))
 
         ifmap_kb, filter_kb, ofmap_kb = self.config.get_mem_sizes()
         print("SRAM IFMAP (kB): \t" + str(ifmap_kb))
