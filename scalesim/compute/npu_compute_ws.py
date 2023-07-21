@@ -557,6 +557,7 @@ def create_prefetch_mat(mat):
     for row in mat:
         tmp_row = row[row != -1]
         if len(tmp_row) != 0:
-            tmp_row = np.unique(tmp_row)
+            _, idx = np.unique(tmp_row, return_index=True)
+            tmp_row = tmp_row[np.sort(idx)]
             ret += tmp_row.tolist()
     return np.array(ret).reshape((1, -1))

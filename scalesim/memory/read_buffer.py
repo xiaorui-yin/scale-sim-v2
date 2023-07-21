@@ -49,6 +49,8 @@ class read_buffer:
         self.hashed_buffer_valid = False
         self.trace_valid = False
 
+        self.using_prefetch = False
+
     #
     def set_params(self, backing_buf_obj,
                    total_size_bytes=1, word_size=1, active_buf_frac=0.9,
@@ -108,6 +110,8 @@ class read_buffer:
         self.active_buf_full_flag = False
         self.hashed_buffer_valid = False
         self.trace_valid = False
+
+        self.using_prefetch = False
 
     #
     def set_fetch_matrix(self, fetch_matrix_np):
@@ -215,29 +219,31 @@ class read_buffer:
             self.prefetch_active_buffer(start_cycle=start_cycle)    # Needs to use the entire operand matrix
                                                                     # keeping in mind the tile order and everything
 
+
         out_cycles_arr = []
-        offset = self.hit_latency
-        # for cycle, request_line in tqdm(zip(incoming_cycles_arr, incoming_requests_arr_np)):
+
+        out_cycle = incoming_cycles_arr[0]
+
+        # TODO need to make it 1D
+        if incoming_requests_arr_np.shape[0] > 1:
+            raise ValueError("Not yet supported")
+
         for i in tqdm(range(incoming_requests_arr_np.shape[0]), disable=True):
-            cycle = incoming_cycles_arr[i]
-            # Fixing for ISSUE #14
-            # request_line = set(incoming_requests_arr_np[i]) #shaves off a few seconds
+
             request_line = incoming_requests_arr_np[i]
 
             for addr in request_line:
                 if addr == -1:
                     continue
 
-                # if addr not in self.active_buffer_contents: #this is super slow!!!
-                # Fixing for ISSUE #14
-                # if not self.active_buffer_hit(addr):  # --> While loop ensures multiple prefetches if needed
                 while not self.active_buffer_hit(addr):
-                    self.new_prefetch(cycle)
-                    potential_stall_cycles = self.last_prefecth_cycle - (cycle + offset)
-                    offset += potential_stall_cycles        # Offset increments if there were potential stalls
+                    # if the cur_cycle is less than the prefetch finish cycle,
+                    # it means prefetch buffer is being used
+                    if out_cycle < self.last_prefecth_cycle:
+                        out_cycle = self.last_prefecth_cycle
+                    self.new_prefetch(out_cycle)
 
-            out_cycles = cycle + offset
-            out_cycles_arr.append(out_cycles)
+            out_cycles_arr.append(out_cycle)
 
         out_cycles_arr_np = np.asarray(out_cycles_arr).reshape((len(out_cycles_arr), 1))
 
@@ -365,7 +371,7 @@ class read_buffer:
             # Fixing ISSUE #14
             # cycles_arr[i][0] = self.last_prefect_cycle + i
             # cycles_arr[i][0] = self.last_prefect_cycle + i + 1
-            cycles_arr[i][0] = cur_cycle + i + 1
+            cycles_arr[i][0] = cur_cycle + i
 
         # 4. Send the request
         response_cycles_arr = self.backing_buffer.service_reads(incoming_cycles_arr=cycles_arr,

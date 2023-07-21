@@ -169,23 +169,23 @@ class double_buffered_scratchpad:
 
             cycle_arr = np.zeros((1,1)) + i + self.stall_cycles
 
-            ifmap_demand_line = ifmap_demand_mat[i, :].reshape((1,ifmap_demand_mat.shape[1]))
+            ifmap_demand_line = np.unique(ifmap_demand_mat[i, :]).reshape((1, -1))
             ifmap_cycle_out = self.ifmap_buf.service_reads(incoming_requests_arr_np=ifmap_demand_line,
                                                             incoming_cycles_arr=cycle_arr)
             ifmap_serviced_cycles += [ifmap_cycle_out[0]]
-            ifmap_stalls = ifmap_cycle_out[0] - cycle_arr[0] - ifmap_hit_latency
+            ifmap_stalls = ifmap_cycle_out[0] - cycle_arr[0] # - ifmap_hit_latency
 
-            filter_demand_line = filter_demand_mat[i, :].reshape((1, filter_demand_mat.shape[1]))
+            filter_demand_line = np.unique(filter_demand_mat[i, :]).reshape((1, -1))
             filter_cycle_out = self.filter_buf.service_reads(incoming_requests_arr_np=filter_demand_line,
                                                            incoming_cycles_arr=cycle_arr)
             filter_serviced_cycles += [filter_cycle_out[0]]
-            filter_stalls = filter_cycle_out[0] - cycle_arr[0] - filter_hit_latency
+            filter_stalls = filter_cycle_out[0] - cycle_arr[0] # - filter_hit_latency
 
-            ofmap_demand_line = ofmap_demand_mat[i, :].reshape((1, ofmap_demand_mat.shape[1]))
+            ofmap_demand_line = np.unique(ofmap_demand_mat[i, :]).reshape((1, -1))
             ofmap_cycle_out = self.ofmap_buf.service_writes(incoming_requests_arr_np=ofmap_demand_line,
                                                              incoming_cycles_arr_np=cycle_arr)
             ofmap_serviced_cycles += [ofmap_cycle_out[0]]
-            ofmap_stalls = ofmap_cycle_out[0] - cycle_arr[0] - 1
+            ofmap_stalls = ofmap_cycle_out[0] - cycle_arr[0] # - 1
 
             self.stall_cycles += int(max(ifmap_stalls[0], filter_stalls[0], ofmap_stalls[0]))
 

@@ -171,7 +171,7 @@ class single_layer_sim:
             if self.config.use_user_dram_bandwidth():
                 bws = self.config.get_bandwidths_as_list()
                 # TODO use config to pass or use multi-bank
-                ifmap_backing_bw = 160
+                ifmap_backing_bw = 320
                 filter_backing_bw = 32
                 ofmap_backing_bw = 64
                 # ifmap_backing_bw = bws[0]
