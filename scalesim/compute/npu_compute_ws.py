@@ -144,7 +144,29 @@ class npu_compute_ws:
     def create_ifmap_prefetch_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
-        self.ifmap_prefetch_matrix = create_prefetch_mat(self.ifmap_demand_matrix)
+        # self.ifmap_prefetch_matrix = create_prefetch_mat(self.ifmap_demand_matrix)
+        # all IFM elements in one OFM row are only loaded once (reuse)
+        ret = []
+        out_h_px_cnt = 0
+        tmp = []
+
+        for row in self.ifmap_demand_matrix:
+            tmp_row = row[row != -1]
+            if len(tmp_row) != 0:
+                if out_h_px_cnt == 0:
+                    tmp = tmp_row
+                else:
+                    tmp = np.concatenate((tmp, tmp_row), axis=0)
+                out_h_px_cnt += 1
+                if out_h_px_cnt == self.out_col:
+                    # tmp = tmp.reshape((1, -1))
+                    _, idx = np.unique(tmp, return_index=True)
+                    tmp = tmp[np.sort(idx)]
+                    ret += tmp.tolist()
+                    tmp = []
+                    out_h_px_cnt = 0
+
+        self.ifmap_prefetch_matrix = np.array(ret).reshape((1, -1))
 
     #
     def create_filter_prefetch_mat(self):
@@ -274,6 +296,23 @@ class npu_compute_ws:
                 ifmap_demand_matrix.append(this_fold_demand)
                 self.compute_utility_per_fold.append(this_mac_util)
         self.ifmap_demand_matrix = np.array(ifmap_demand_matrix)
+
+        # TODO
+        # 1. separate for each OFM row
+        # 2. create a new matrix self.compute_matrix
+        # we remove reused elements for each cycle because our NPU can ensure that reused elements stay in buffer
+        ifmap_compute_matrix = self.ifmap_demand_matrix.copy()
+        for row_idx in range(ifmap_compute_matrix.shape[0]):
+            if row_idx == 0:
+                continue
+            for idx in range(ifmap_compute_matrix.shape[1]):
+                if ifmap_compute_matrix[row_idx, idx] == -1:
+                    continue
+                if ifmap_compute_matrix[row_idx, idx] in ifmap_compute_matrix[row_idx - 1]:
+                    self.ifmap_demand_matrix[row_idx, idx] = -1
+        print("hello")
+
+
     #
     def create_filter_demand_mat(self):
         assert self.params_set_flag, 'Parameters are not set'

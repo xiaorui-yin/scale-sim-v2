@@ -232,10 +232,17 @@ class read_buffer:
 
             request_line = incoming_requests_arr_np[i]
 
+            # First check all reused elements
+            new_addr = []
             for addr in request_line:
                 if addr == -1:
                     continue
 
+                if not self.active_buffer_hit(addr):
+                    new_addr.append(addr)
+
+            # Then check all new elements
+            for addr in new_addr:
                 while not self.active_buffer_hit(addr):
                     # if the cur_cycle is less than the prefetch finish cycle,
                     # it means prefetch buffer is being used
