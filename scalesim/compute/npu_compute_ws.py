@@ -62,6 +62,9 @@ class npu_compute_ws:
         self.prefetch_mat_ready_flag = False
         self.demand_mat_ready_flag = False
 
+        self.num_out_h_per_step = 0
+        self.num_out_w_per_step = 0
+
     #
     def set_params(self,
                    config_obj=cfg(),
@@ -157,7 +160,7 @@ class npu_compute_ws:
                     tmp = tmp_row
                 else:
                     tmp = np.concatenate((tmp, tmp_row), axis=0)
-                out_h_px_cnt += 1
+                out_h_px_cnt += self.num_out_w_per_step
                 if out_h_px_cnt == self.out_col:
                     # tmp = tmp.reshape((1, -1))
                     _, idx = np.unique(tmp, return_index=True)
@@ -172,7 +175,15 @@ class npu_compute_ws:
     def create_filter_prefetch_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
-        self.filter_prefetch_matrix = create_prefetch_mat(self.filter_demand_matrix)
+        self.filter_prefetch_matrix = []
+
+        for row in self.filter_demand_matrix:
+            tmp_row = row[row != -1]
+            if len(tmp_row) != 0:
+                _, idx = np.unique(tmp_row, return_index=True)
+                tmp_row = tmp_row[np.sort(idx)]
+                self.filter_prefetch_matrix += tmp_row.tolist()
+        self.filter_prefetch_matrix = np.array(self.filter_prefetch_matrix).reshape((1, -1))
 
     #
     def create_demand_matrices(self):
@@ -206,7 +217,7 @@ class npu_compute_ws:
                 if self.dw_flag:
                     if self.Sr == 9:
                         # depthwise 3x3: work on 2x2 output pixels at a time
-                        num_horizontal_pixels = int((self.num_out_px_per_step / self.num_filters_per_step) / 2)
+                        self.num_out_w_per_step = int((self.num_out_px_per_step / self.num_filters_per_step) / 2)
                         # num_vertical_pixels == 2 (fixed)
                         # ifm_addr_mat:
                         # [px0_ch0]
@@ -223,12 +234,14 @@ class npu_compute_ws:
                         # first time we work on px0(ch0 ~ ch15), px1(ch0 ~ ch15), px56(ch0 ~ ch15), px57(ch0 ~ ch15) start_row_idx = 0
                         # move to next 2x2 output pixels, we work on px2(ch0 ~ ch15), px3(ch0 ~ ch15), px58(ch0 ~ ch15), px59(ch0 ~ ch15) start_row_idx = 2 * 32 = 64
                         # once first two rows are done, we move to the third row, start_row_idx = 2 * 56 * 32 = 3584
-                        start_row_idx = int(j % (self.out_col / 2)) * num_horizontal_pixels * self.Sc +\
+                        start_row_idx = int(j % (self.out_col / 2)) * self.num_out_w_per_step * self.Sc +\
                                         int(j / (self.out_col / 2)) * self.out_col * self.Sc * 2
                     elif self.Sr == 25:
+                        self.num_out_w_per_step = 1
                         # depthwise 5x5: work on 1x1 output pixels at a time
                         start_row_idx = j * self.Sc
                 else:
+                    self.num_out_w_per_step = 1
                     start_row_idx = j * self.num_out_px_per_step
                 end_row_idx = min(start_row_idx + self.num_out_px_per_step, self.T)
 
@@ -310,8 +323,6 @@ class npu_compute_ws:
                     continue
                 if ifmap_compute_matrix[row_idx, idx] in ifmap_compute_matrix[row_idx - 1]:
                     self.ifmap_demand_matrix[row_idx, idx] = -1
-        print("hello")
-
 
     #
     def create_filter_demand_mat(self):
@@ -585,18 +596,3 @@ def skew_matrix(input_matrix_np):
                 out_matrix_np = np.concatenate((out_matrix_np, this_col), axis=1)
 
     return out_matrix_np
-
-
-def create_prefetch_mat(mat):
-    # for each row of mat, delete all -1 and repeated elements
-    # then concatenate all rows together and reshape to 1d array
-
-    ret = []
-
-    for row in mat:
-        tmp_row = row[row != -1]
-        if len(tmp_row) != 0:
-            _, idx = np.unique(tmp_row, return_index=True)
-            tmp_row = tmp_row[np.sort(idx)]
-            ret += tmp_row.tolist()
-    return np.array(ret).reshape((1, -1))

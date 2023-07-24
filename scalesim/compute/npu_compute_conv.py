@@ -17,6 +17,7 @@ class npu_compute_conv:
         self.dw_flag = False
 
         self.filter_size = 0
+        self.num_in_ch = 0
 
         # Derived parameters
         self.Sr = 0
@@ -57,6 +58,8 @@ class npu_compute_conv:
         self.ofmap_demand_matrix = np.zeros((1,1))
         self.filter_demand_matrix = np.zeros((1,1))
 
+        self.ifmap_compute_matrix = np.zeros((1, 1))
+
         # Generated metrics
         self.ifmap_reads = 0
         self.filter_reads = 0
@@ -70,11 +73,11 @@ class npu_compute_conv:
         self.prefetch_mat_ready_flag = False
         self.demand_mat_ready_flag = False
 
+        self.num_in_ch_per_step = 0
+        self.num_out_h_per_step = 0
+        self.num_out_w_per_step = 0
+        self.width_step = 0
         # TODO fixed local parameters, should be changed to variables in the future
-        self.num_in_ch_per_step = 16
-        self.width_step = 8
-        self.num_out_h_per_step = 2
-        self.num_out_w_per_step = 2
         self.num_out_ch_per_group = 16
 
     #
@@ -85,6 +88,7 @@ class npu_compute_conv:
                    filter_size=0,
                    dw_flag=False,
                    out_col=0,
+                   width_step=0,
                    ifmap_op_mat=np.zeros((1,1)),
                    ofmap_op_mat=np.zeros((1,1)),
                    filter_op_mat=np.zeros((1,1))
@@ -100,6 +104,7 @@ class npu_compute_conv:
         self.dw_flag = dw_flag
         self.filter_size = filter_size
         self.out_col = out_col
+        self.width_step = width_step
 
         ifmap_col = self.ifmap_op_mat.shape[1]
         filter_row = self.filter_op_mat.shape[0]
@@ -115,6 +120,19 @@ class npu_compute_conv:
 
         self.num_core, self.arr_row, self.arr_col = self.config.get_array_dims()
         self.num_pe = self.num_core * self.arr_row * self.arr_col
+
+        # IFM unicast only supports maximum 2 OFM rows per step
+        self.num_out_h_per_step = 2
+        self.num_out_w_per_step = self.num_core // self.num_out_h_per_step
+
+        self.num_in_ch = int(self.Sr / self.filter_size)
+        assert (self.Sr % self.filter_size == 0), "Number of input channels is not divisible by filter size"
+
+        # for general convolution
+        self.num_in_ch_per_step = min((self.arr_row * self.arr_col) // self.filter_size, self.num_in_ch)
+        # for optimized point-wise convolution TODO: what if num_in_ch_per_step = 8
+        if filter_size == 1:
+            self.num_in_ch_per_step = 16
 
         self.window_row = self.filter_size * self.num_in_ch_per_step
         self.num_rows_per_filter = int(math.pow(2, math.ceil(math.log2(self.window_row / self.arr_col))))
@@ -140,7 +158,6 @@ class npu_compute_conv:
             raise ValueError("Only support unicast IFM mapping mode currently, should be extended to broadcast and double")
 
         self.window_fold = math.ceil(self.Sr / self.window_row)
-        # self.out_px_fold = math.ceil(self.T / (self.width_step * self.num_out_px_per_step))
         self.out_row_fold = math.ceil(self.out_row / self.num_out_h_per_step)
         self.out_col_fold = math.ceil(self.out_col / (self.num_out_w_per_step * self.width_step))
         self.out_px_fold = math.ceil(self.out_row_fold * self.out_col_fold)
@@ -164,13 +181,41 @@ class npu_compute_conv:
     def create_ifmap_prefetch_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
-        self.ifmap_prefetch_matrix = create_prefetch_mat(self.ifmap_demand_matrix)
+        # all IFM elements in one OFM row are only loaded once (reuse)
+        ret = []
+        out_h_px_cnt = 0
+        tmp = []
+
+        for row in self.ifmap_demand_matrix:
+            tmp_row = row[row != -1]
+            if len(tmp_row) != 0:
+                if out_h_px_cnt == 0:
+                    tmp = tmp_row
+                else:
+                    tmp = np.concatenate((tmp, tmp_row), axis=0)
+                out_h_px_cnt += self.num_out_w_per_step
+                if out_h_px_cnt == self.width_step:  # FIXME, sometimes less than width_step
+                    _, idx = np.unique(tmp, return_index=True)
+                    tmp = tmp[np.sort(idx)]
+                    ret += tmp.tolist()
+                    tmp = []
+                    out_h_px_cnt = 0
+
+        self.ifmap_prefetch_matrix = np.array(ret).reshape((1, -1))
 
     #
     def create_filter_prefetch_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
-        self.filter_prefetch_matrix = create_prefetch_mat(self.filter_demand_matrix)
+        self.filter_prefetch_matrix = []
+
+        for row in self.filter_demand_matrix:
+            tmp_row = row[row != -1]
+            if len(tmp_row) != 0:
+                _, idx = np.unique(tmp_row, return_index=True)
+                tmp_row = tmp_row[np.sort(idx)]
+                self.filter_prefetch_matrix += tmp_row.tolist()
+        self.filter_prefetch_matrix = np.array(self.filter_prefetch_matrix).reshape((1, -1))
 
     #
     def create_demand_matrices(self):
@@ -197,12 +242,10 @@ class npu_compute_conv:
         # clock cycles for weights to be loaded (one clock cycle)
         inter_fold_gap_prefix_mat = (np.ones((1, self.num_pe)) * -1).tolist()[0]
         # one clock cycle for the first set of filter weights to be loaded
-        ifmap_demand_matrix = [inter_fold_gap_prefix_mat]
+        ifmap_compute_matrix = [inter_fold_gap_prefix_mat]
+        # set is faster than list
+        ifmap_compute_set = [{-1}]
         self.compute_utility_per_fold.append(0)
-
-        # number input channel
-        num_in_ch = int(self.Sr / self.filter_size)
-        assert(self.Sr % self.filter_size == 0), "Number of input channels is not divisible by filter size"
 
         for i in range(self.filter_fold):
             for j in range(self.out_px_fold):
@@ -235,10 +278,10 @@ class npu_compute_conv:
                                     ifm_row = []
                                     # for one output pixel, the window size is filter_size * num_in_ch_per_step
                                     for p in range(self.filter_size):
-                                        max_col_idx = p * num_in_ch + num_in_ch
-                                        end_col_idx = min(start_col_idx + p * num_in_ch + self.num_in_ch_per_step, max_col_idx)
+                                        max_col_idx = p * self.num_in_ch + self.num_in_ch
+                                        end_col_idx = min(start_col_idx + p * self.num_in_ch + self.num_in_ch_per_step, max_col_idx)
 
-                                        this_ = self.ifmap_op_mat[row_idx, start_col_idx + p * num_in_ch: end_col_idx].tolist()
+                                        this_ = self.ifmap_op_mat[row_idx, start_col_idx + p * self.num_in_ch: end_col_idx].tolist()
                                         ifm_row += this_
                                     ifm_to_process.append(ifm_row)
 
@@ -278,9 +321,27 @@ class npu_compute_conv:
                             # calculate the overall utilization of the current compute cycle
                             this_mac_util = mac_used / self.num_pe
 
-                            ifmap_demand_matrix.append(this_fold_demand)
+                            ifmap_compute_matrix.append(this_fold_demand)
+                            this_set = {s for s in this_fold_demand}
+                            ifmap_compute_set.append(this_set)
                             self.compute_utility_per_fold.append(this_mac_util)
 
+        # ==============================================================
+        # Create demand matrix
+        # ==============================================================
+
+        # remove reused elements for each cycle because our NPU can ensure that reused elements stay in buffer
+        ifmap_demand_matrix = ifmap_compute_matrix.copy()
+        for row_idx in range(len(ifmap_compute_matrix)):
+            if row_idx == 0:
+                continue
+            for idx in range(len(ifmap_compute_matrix[0])):
+                if ifmap_compute_matrix[row_idx][idx] == -1:
+                    continue
+                if ifmap_compute_matrix[row_idx][idx] in ifmap_compute_set[row_idx - 1]:
+                    ifmap_demand_matrix[row_idx][idx] = int(-1)
+
+        self.ifmap_compute_matrix = np.array(ifmap_compute_matrix)
         self.ifmap_demand_matrix = np.array(ifmap_demand_matrix)
 
     #
@@ -496,17 +557,3 @@ def skew_matrix(input_matrix_np):
                 out_matrix_np = np.concatenate((out_matrix_np, this_col), axis=1)
 
     return out_matrix_np
-
-
-def create_prefetch_mat(mat):
-    # for each row of mat, delete all -1 and repeated elements
-    # then concatenate all rows together and reshape to 1d array
-
-    ret = []
-
-    for row in mat:
-        tmp_row = row[row != -1]
-        if len(tmp_row) != 0:
-            tmp_row = np.unique(tmp_row)
-            ret += tmp_row.tolist()
-    return np.array(ret).reshape((1, -1))

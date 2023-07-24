@@ -120,18 +120,21 @@ class single_layer_sim:
         ifm_mm, filter_mm = self.topo.get_layer_mapping_mode(self.layer_id)
         dw_flag = self.topo.get_layer_dw_flag(self.layer_id)
 
-        out_col, out_row = self.topo.get_layer_ofmap_dims(self.layer_id)
+        out_row, out_col = self.topo.get_layer_ofmap_dims(self.layer_id)
         # 1.2 Get the prefetch matrices for both operands
         if self.topo.get_layer_conv_flag(self.layer_id):
             self.compute_system = npu_compute_conv()
-            f_w, f_h = self.topo.get_filter_size(self.layer_id)
+            f_h, f_w = self.topo.get_filter_size(self.layer_id)
             filter_size = f_w * f_h
+            ofm_buffer_size = self.config.get_mem_sizes()[-1]
+            width_step = ofm_buffer_size // 32
             self.compute_system.set_params(config_obj=self.config,
                                            ifm_mm=ifm_mm,
                                            filter_mm=filter_mm,
                                            filter_size=filter_size,
                                            dw_flag=dw_flag,
                                            out_col=out_col,
+                                           width_step=width_step,
                                            ifmap_op_mat=ifmap_op_mat,
                                            filter_op_mat=filter_op_mat,
                                            ofmap_op_mat=ofmap_op_mat)
@@ -161,7 +164,7 @@ class single_layer_sim:
             # filter_buf_size_bytes = 1024 * filter_buf_size_kb
             # ofmap_buf_size_bytes = 1024 * ofmap_buf_size_kb
             ifmap_buf_size_bytes = ifmap_buf_size_kb
-            filter_buf_size_bytes = filter_buf_size_kb
+            filter_buf_size_bytes = filter_buf_size_kb * 2
             ofmap_buf_size_bytes = ofmap_buf_size_kb
 
             ifmap_backing_bw = 1
