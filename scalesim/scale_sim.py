@@ -132,7 +132,7 @@ class scalesim:
         print("SRAM IFMAP (kB): \t" + str(ifmap_kb))
         print("SRAM Filter (kB): \t" + str(filter_kb))
         print("SRAM OFMAP (kB): \t" + str(ofmap_kb))
-        print("Dataflow: \t" + df_string)
+        # print("Dataflow: \t" + df_string)
         print("CSV file path: \t" + self.config.get_topology_path())
         print("Number of Remote Memory Banks: \t" + str(self.config.get_mem_banks()))
 

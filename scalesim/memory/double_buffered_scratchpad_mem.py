@@ -55,6 +55,9 @@ class double_buffered_scratchpad:
         self.traces_valid = False
         self.params_valid_flag = True
 
+        self.ifmap_stalls = 0
+        self.filter_stalls = 0
+
     #
     def set_params(self,
                    verbose=True,
@@ -187,7 +190,11 @@ class double_buffered_scratchpad:
             ofmap_serviced_cycles += [ofmap_cycle_out[0]]
             ofmap_stalls = ofmap_cycle_out[0] - cycle_arr[0] # - 1
 
-            self.stall_cycles += int(max(ifmap_stalls[0], filter_stalls[0], ofmap_stalls[0]))
+            # self.stall_cycles += int(max(ifmap_stalls[0], filter_stalls[0], ofmap_stalls[0]))
+            self.stall_cycles += int(max(ifmap_stalls[0], filter_stalls[0]))
+
+            self.ifmap_stalls += ifmap_stalls[0]
+            self.filter_stalls += filter_stalls[0]
 
         if self.estimate_bandwidth_mode:
             # IDE shows warning as complete_all_prefetches is not implemented in read_buffer class
@@ -206,147 +213,9 @@ class double_buffered_scratchpad:
 
         ofmap_services_cycles_np = np.asarray(ofmap_serviced_cycles).reshape((len(ofmap_serviced_cycles), 1))
         self.ofmap_trace_matrix = np.concatenate((ofmap_services_cycles_np, ofmap_demand_mat), axis=1)
-        self.total_cycles = int(ofmap_serviced_cycles[-1][0])
 
-        # END of serving demands from memory
-        self.traces_valid = True
+        self.total_cycles = int(ifmap_serviced_cycles[-1][0])
 
-    # This is the trace computation logic of this memory system
-    # Anand: This is too complex, perform the serve cycle by cycle for the requests
-    def service_memory_requests_old(self, ifmap_demand_mat, filter_demand_mat, ofmap_demand_mat):
-        # TODO: assert sanity check
-        assert self.params_valid_flag, 'Memories not initialized yet'
-
-        # Logic:
-        # Stalls can occur in both read and write portions and interfere with each other
-        # We mitigate interference by picking a window in which there are no write stall,
-        # ie, there is sufficient free space in the write buffer
-
-        ofmap_lines_remaining = ofmap_demand_mat.shape[0]       # The three demand mats have the same shape though
-        start_line_idx = 0
-        end_line_idx = 0
-
-        first = True
-        cycle_offset = 0
-        self.total_cycles = 0
-        self.stall_cycles = 0
-
-        # Status bar
-        pbar_disable = not self.verbose #or True
-        pbar = tqdm(total=ofmap_lines_remaining, disable=pbar_disable)
-
-        avg_read_time_series = []
-
-        while ofmap_lines_remaining > 0:
-            loop_start_time = time.time()
-            ofmap_free_space = self.ofmap_buf.get_free_space()
-
-            # Find the number of lines till the ofmap_free_space is filled up
-            count = 0
-            while not count > ofmap_free_space:
-                this_line = ofmap_demand_mat[end_line_idx]
-                for elem in this_line:
-                    if not elem == -1:
-                        count += 1
-
-                if not count > ofmap_free_space:
-                    end_line_idx += 1
-                    # Limit check
-                    if not end_line_idx < ofmap_demand_mat.shape[0]:
-                        end_line_idx = ofmap_demand_mat.shape[0] - 1
-                        count = ofmap_free_space + 1
-                else:   # Send request with minimal data ie one line of the requests
-                    end_line_idx += 1
-            # END of line counting
-
-            num_lines = end_line_idx - start_line_idx + 1
-            this_req_cycles_arr = [int(x + cycle_offset) for x in range(num_lines)]
-            this_req_cycles_arr_np = np.asarray(this_req_cycles_arr).reshape((num_lines,1))
-
-            this_req_ifmap_demands = ifmap_demand_mat[start_line_idx:(end_line_idx + 1), :]
-            this_req_filter_demands = filter_demand_mat[start_line_idx:(end_line_idx + 1), :]
-            this_req_ofmap_demands = ofmap_demand_mat[start_line_idx:(end_line_idx + 1), :]
-
-            no_stall_cycles = num_lines     # Since the cycles are consecutive at this point
-
-            time_start = time.time()
-            ifmap_cycles_out = self.ifmap_buf.service_reads(incoming_requests_arr_np=this_req_ifmap_demands,
-                                                            incoming_cycles_arr=this_req_cycles_arr_np)
-            time_end = time.time()
-            delta = time_end - time_start
-            avg_read_time_series.append(delta)
-
-            # Take care of the incurred stalls when launching demands for filter_reads
-            # Note: Stalls incurred on reading line i in ifmap reflect the request cycles for line i+1 in filter
-            ifmap_hit_latency = self.ifmap_buf.get_hit_latency()
-            ifmap_stalls = ifmap_cycles_out - this_req_cycles_arr_np - ifmap_hit_latency    # Vec - vec - scalar
-            ifmap_stalls = np.concatenate((np.zeros((1,1)), ifmap_stalls[0:-1]), axis=0)    # Shift by one row
-            this_req_cycles_arr_np = this_req_cycles_arr_np + ifmap_stalls
-
-            time_start = time.time()
-            filter_cycles_out = self.filter_buf.service_reads(incoming_requests_arr_np=this_req_filter_demands,
-                                                              incoming_cycles_arr=this_req_cycles_arr_np)
-            time_end = time.time()
-            delta = time_end - time_start
-            avg_read_time_series.append(delta)
-
-            # Take care of stalls again --> The entire array stops when there is a stall
-            filter_hit_latency = self.filter_buf.get_hit_latency()
-            filter_stalls = filter_cycles_out - this_req_cycles_arr_np - filter_hit_latency  # Vec - vec - scalar
-            filter_stalls = np.concatenate((np.zeros((1, 1)), filter_stalls[0:-1]), axis=0)  # Shift by one row
-            this_req_cycles_arr_np = this_req_cycles_arr_np + filter_stalls
-
-            ofmap_cycles_out = self.ofmap_buf.service_writes(incoming_requests_arr_np=this_req_ofmap_demands,
-                                                             incoming_cycles_arr_np=this_req_cycles_arr_np)
-
-            # Make the trace matrices
-            this_req_ifmap_trace_matrix = np.concatenate((ifmap_cycles_out, this_req_ifmap_demands), axis=1)
-            this_req_filter_trace_matrix = np.concatenate((filter_cycles_out, this_req_filter_demands), axis=1)
-            this_req_ofmap_trace_matrix = np.concatenate((ofmap_cycles_out, this_req_ofmap_demands), axis=1)
-
-            actual_cycles = ofmap_cycles_out[-1][0] - this_req_cycles_arr_np[0][0] + 1
-            num_stalls = actual_cycles - no_stall_cycles
-
-            self.stall_cycles += num_stalls
-            self.total_cycles = ofmap_cycles_out[-1][0] + 1         # OFMAP is served the last
-
-            if first:
-                first = False
-                self.ifmap_trace_matrix = this_req_ifmap_trace_matrix
-                self.filter_trace_matrix = this_req_filter_trace_matrix
-                self.ofmap_trace_matrix = this_req_ofmap_trace_matrix
-            else:
-                self.ifmap_trace_matrix = np.concatenate((self.ifmap_trace_matrix, this_req_ifmap_trace_matrix), axis=0)
-                self.filter_trace_matrix = np.concatenate((self.filter_trace_matrix, this_req_filter_trace_matrix), axis=0)
-                self.ofmap_trace_matrix = np.concatenate((self.ofmap_trace_matrix, this_req_ofmap_trace_matrix), axis=0)
-
-            # Update the local variable for another iteration of the while loop
-            cycle_offset = ofmap_cycles_out[-1][0] + 1
-            start_line_idx = end_line_idx + 1
-
-            pbar.update(num_lines)
-            ofmap_lines_remaining = max(ofmap_demand_mat.shape[0] - (end_line_idx + 1), 0)    # Cutoff at 0
-            #print("DEBUG: " + str(end_line_idx))
-
-            if end_line_idx > ofmap_demand_mat.shape[0]:
-                print('Trap')
-
-            #if int(ofmap_lines_remaining % 1000) == 0:
-            #    print("DEBUG: " + str(ofmap_lines_remaining))
-
-            loop_end_time = time.time()
-            loop_time = loop_end_time - loop_start_time
-            #print('DEBUG: Time taken in one iteration: ' + str(loop_time))
-
-        # At this stage there might still be some data in the active buffer of the OFMAP scratchpad
-        # The following drains it and generates the OFMAP
-        drain_start_cycle = self.ofmap_trace_matrix[-1][0] + 1
-        self.ofmap_buf.empty_all_buffers(drain_start_cycle)
-
-        #avg_read_time = sum(avg_read_time_series) / len(avg_read_time_series)
-        #print('DEBUG: Avg time to service reads= ' + str(avg_read_time))
-
-        pbar.close()
         # END of serving demands from memory
         self.traces_valid = True
 
@@ -358,7 +227,7 @@ class double_buffered_scratchpad:
     #
     def get_stall_cycles(self):
         assert self.traces_valid, 'Traces not generated yet'
-        return self.stall_cycles
+        return self.stall_cycles, self.ifmap_stalls, self.filter_stalls
 
     #
     def get_ifmap_sram_start_stop_cycles(self):

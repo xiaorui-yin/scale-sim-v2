@@ -84,18 +84,22 @@ class simulator:
                 stall_cycles = comp_items[1]
                 util = comp_items[2]
                 mapping_eff = comp_items[3]
+                ifmap_stalls = comp_items[4]
+                filter_stalls = comp_items[5]
                 print('Compute cycles: ' + str(comp_cycles))
                 print('Stall cycles: ' + str(stall_cycles))
+                print('     IFM Stall cycles: ' + str(ifmap_stalls))
+                print('     Filter Stall cycles: ' + str(filter_stalls))
                 print('Overall utilization: ' + "{:.2f}".format(util) +'%')
-                print('Mapping efficiency: ' + "{:.2f}".format(mapping_eff) +'%')
+                print('MAC Core Mapping efficiency: ' + "{:.2f}".format(mapping_eff) +'%')
 
                 avg_bw_items = single_layer_obj.get_bandwidth_report_items()
                 avg_ifmap_bw = avg_bw_items[3]
                 avg_filter_bw = avg_bw_items[4]
                 avg_ofmap_bw = avg_bw_items[5]
-                print('Average IFMAP DRAM BW: ' + "{:.3f}".format(avg_ifmap_bw) + ' words/cycle')
-                print('Average Filter DRAM BW: ' + "{:.3f}".format(avg_filter_bw) + ' words/cycle')
-                print('Average OFMAP DRAM BW: ' + "{:.3f}".format(avg_ofmap_bw) + ' words/cycle')
+                print('Average IFMAP SRAM BW: ' + "{:.3f}".format(avg_ifmap_bw) + ' bytes/cycle')
+                print('Average Filter SRAM BW: ' + "{:.3f}".format(avg_filter_bw) + ' bytes/cycle')
+                print('Average OFMAP SRAM BW: ' + "{:.3f}".format(avg_ofmap_bw) + ' bytes/cycle')
 
             if self.save_trace:
                 if self.verbose:

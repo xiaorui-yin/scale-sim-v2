@@ -241,11 +241,6 @@ class read_buffer:
                 if not self.active_buffer_hit(addr):
                     new_addr.append(addr)
 
-            l = len(new_addr)
-            # print(l)
-            # if (out_cycle == 3490):
-            #     print("here")
-
             # Then check all new elements
             for addr in new_addr:
                 while not self.active_buffer_hit(addr):

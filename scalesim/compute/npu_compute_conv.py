@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import copy
 from tqdm import tqdm
 from scalesim.scale_config import scale_config as cfg
 
@@ -104,7 +105,6 @@ class npu_compute_conv:
         self.dw_flag = dw_flag
         self.filter_size = filter_size
         self.out_col = out_col
-        self.width_step = width_step
 
         ifmap_col = self.ifmap_op_mat.shape[1]
         filter_row = self.filter_op_mat.shape[0]
@@ -124,6 +124,8 @@ class npu_compute_conv:
         # IFM unicast only supports maximum 2 OFM rows per step
         self.num_out_h_per_step = 2
         self.num_out_w_per_step = self.num_core // self.num_out_h_per_step
+
+        self.width_step = width_step // self.num_out_w_per_step
 
         self.num_in_ch = int(self.Sr / self.filter_size)
         assert (self.Sr % self.filter_size == 0), "Number of input channels is not divisible by filter size"
@@ -186,22 +188,22 @@ class npu_compute_conv:
         out_h_px_cnt = 0
         tmp = []
 
-        for row in self.ifmap_demand_matrix:
+        for row in self.ifmap_demand_matrix[1:, :]:
             tmp_row = row[row != -1]
-            if len(tmp_row) != 0:
-                if out_h_px_cnt == 0:
-                    tmp = tmp_row
-                else:
-                    tmp = np.concatenate((tmp, tmp_row), axis=0)
-                out_h_px_cnt += self.num_out_w_per_step
-                if out_h_px_cnt == self.width_step:  # FIXME, sometimes less than width_step
-                    _, idx = np.unique(tmp, return_index=True)
-                    tmp = tmp[np.sort(idx)]
-                    ret += tmp.tolist()
-                    tmp = []
-                    out_h_px_cnt = 0
+            if out_h_px_cnt == 0:
+                tmp = tmp_row
+            else:
+                tmp = np.concatenate((tmp, tmp_row), axis=0)
+            out_h_px_cnt += self.num_out_w_per_step
+            if out_h_px_cnt == self.width_step:  # FIXME, sometimes less than width_step
+                _, idx = np.unique(tmp, return_index=True)
+                tmp = tmp[np.sort(idx)]
+                ret += tmp.tolist()
+                tmp = []
+                out_h_px_cnt = 0
 
         self.ifmap_prefetch_matrix = np.array(ret).reshape((1, -1))
+        self.ifmap_reads = self.ifmap_prefetch_matrix.shape[1]
 
     #
     def create_filter_prefetch_mat(self):
@@ -216,6 +218,7 @@ class npu_compute_conv:
                 tmp_row = tmp_row[np.sort(idx)]
                 self.filter_prefetch_matrix += tmp_row.tolist()
         self.filter_prefetch_matrix = np.array(self.filter_prefetch_matrix).reshape((1, -1))
+        self.filter_reads = self.filter_prefetch_matrix.shape[1]
 
     #
     def create_demand_matrices(self):
@@ -270,6 +273,11 @@ class npu_compute_conv:
                                 for px_h in range(self.num_out_w_per_step):
                                     row_idx = start_row_idx + self.out_col * px_v + px_h
 
+                                    # in the case of odd number out_row or out_col
+                                    if start_row_idx % self.out_col + px_h >= self.out_col or \
+                                        start_row_idx // self.out_col + px_v >= self.out_row:
+                                        break
+
                                     # if the row index is out of bound, skip
                                     max_row_idx = (j // self.out_col_fold) * (2 * self.out_col) + self.out_col * px_v + self.out_col
                                     if row_idx >= max_row_idx:
@@ -292,7 +300,7 @@ class npu_compute_conv:
                             for row in ifm_to_process:
                                 assert len(row) == num_cols_to_process, 'IFM demand matrix is not a rectangle'
                                 # count how many IFM elements are read (excluding padding)
-                                self.ifmap_reads += len(row) - row.count(-1)
+                                # self.ifmap_reads += len(row) - row.count(-1)
 
                             # ==============================================================
                             # Fill MAC cores
@@ -331,15 +339,16 @@ class npu_compute_conv:
         # ==============================================================
 
         # remove reused elements for each cycle because our NPU can ensure that reused elements stay in buffer
-        ifmap_demand_matrix = ifmap_compute_matrix.copy()
+        # ifmap_demand_matrix = copy.deepcopy(ifmap_compute_matrix)  # too slow
+        ifmap_demand_matrix = [[-1 for _ in range(self.num_pe)] for _ in range(len(ifmap_compute_matrix))]
         for row_idx in range(len(ifmap_compute_matrix)):
             if row_idx == 0:
                 continue
             for idx in range(len(ifmap_compute_matrix[0])):
                 if ifmap_compute_matrix[row_idx][idx] == -1:
                     continue
-                if ifmap_compute_matrix[row_idx][idx] in ifmap_compute_set[row_idx - 1]:
-                    ifmap_demand_matrix[row_idx][idx] = int(-1)
+                if ifmap_compute_matrix[row_idx][idx] not in ifmap_compute_set[row_idx - 1]:
+                    ifmap_demand_matrix[row_idx][idx] = ifmap_compute_matrix[row_idx][idx]
 
         self.ifmap_compute_matrix = np.array(ifmap_compute_matrix)
         self.ifmap_demand_matrix = np.array(ifmap_demand_matrix)
@@ -462,6 +471,12 @@ class npu_compute_conv:
             self.create_demand_matrices()
 
         return self.ifmap_demand_matrix
+
+    def get_ifmap_compute_mat(self):
+        if not self.demand_mat_ready_flag:
+            self.create_demand_matrices()
+
+        return self.ifmap_compute_matrix
 
     #
     def get_filter_demand_mat(self):

@@ -26,6 +26,8 @@ class single_layer_sim:
         # Report items : Compute report
         self.total_cycles = 0
         self.stall_cycles = 0
+        self.ifmap_stalls = 0
+        self.filter_stalls = 0
         self.num_compute = 0
         self.num_mac_unit = 0
         self.overall_util = 0
@@ -245,7 +247,7 @@ class single_layer_sim:
 
         # Compute report
         self.total_cycles = self.memory_system.get_total_compute_cycles()
-        self.stall_cycles = self.memory_system.get_stall_cycles()
+        self.stall_cycles, self.ifmap_stalls, self.filter_stalls = self.memory_system.get_stall_cycles()
         self.overall_util = (self.num_compute * 100) / (self.total_cycles * self.num_mac_unit)
         # self.mapping_eff = self.compute_system.get_avg_mapping_efficiency() * 100
         self.compute_util = self.compute_system.get_avg_compute_utilization() * 100
@@ -294,7 +296,7 @@ class single_layer_sim:
         if not self.report_items_ready:
             self.calc_report_data()
 
-        items = [self.total_cycles, self.stall_cycles, self.overall_util, self.compute_util]
+        items = [self.total_cycles, self.stall_cycles, self.overall_util, self.compute_util, self.ifmap_stalls, self.filter_stalls]
         return items
 
     #

@@ -1,6 +1,7 @@
 import math
 import numpy as np
 from tqdm import tqdm
+import copy
 from scalesim.scale_config import scale_config as cfg
 
 
@@ -23,6 +24,7 @@ class npu_compute_ws:
         self.T = 0
 
         self.out_col = 0
+        self.out_row = 0
 
         self.num_core = 0
         self.arr_row = 0
@@ -49,6 +51,8 @@ class npu_compute_ws:
         self.ofmap_demand_matrix = np.zeros((1,1))
         self.filter_demand_matrix = np.zeros((1,1))
 
+        self.ifmap_compute_matrix = np.zeros((1, 1))
+
         # Generated metrics
         self.ifmap_reads = 0
         self.filter_reads = 0
@@ -64,6 +68,9 @@ class npu_compute_ws:
 
         self.num_out_h_per_step = 0
         self.num_out_w_per_step = 0
+
+        self.out_row_fold = 0
+        self.out_col_fold = 0
 
     #
     def set_params(self,
@@ -86,8 +93,6 @@ class npu_compute_ws:
         self.filter_mm = filter_mm
         self.dw_flag = dw_flag
 
-        self.out_col = out_col
-
         ifmap_col = self.ifmap_op_mat.shape[1]
         filter_row = self.filter_op_mat.shape[0]
 
@@ -96,6 +101,12 @@ class npu_compute_ws:
         self.Sr = self.ifmap_op_mat.shape[1]  # window size k_h * k_w * c_i
         self.Sc = self.filter_op_mat.shape[1]  # c_o
         self.T = self.ifmap_op_mat.shape[0]  # number of output pixels
+
+        self.out_col = out_col
+        if self.dw_flag:
+            self.out_row = self.T // (self.out_col * self.Sc)
+        else:
+            self.out_row = self.T // self.out_col
 
         self.num_core, self.arr_row, self.arr_col = self.config.get_array_dims()
         self.num_pe = self.num_core * self.arr_row * self.arr_col
@@ -125,7 +136,15 @@ class npu_compute_ws:
         else:
             raise ValueError("Mapping Mode must be {'unicast', 'broadcast', 'double'}")
         if self.dw_flag:
-            self.out_px_fold = math.ceil((self.T / self.num_out_px_per_step) / self.filter_fold)
+            if self.Sr == 9:
+                self.num_out_h_per_step = 2
+                self.num_out_w_per_step = int(self.num_core / 2)
+            elif self.Sr == 25:
+                self.num_out_h_per_step = 1
+                self.num_out_w_per_step = 1
+            self.out_col_fold = math.ceil(self.out_col / self.num_out_w_per_step)
+            self.out_row_fold = math.ceil(self.out_row / self.num_out_h_per_step)
+            self.out_px_fold = self.out_row_fold * self.out_col_fold
         else:
             self.out_px_fold = math.ceil(self.T / self.num_out_px_per_step)
 
@@ -153,23 +172,23 @@ class npu_compute_ws:
         out_h_px_cnt = 0
         tmp = []
 
-        for row in self.ifmap_demand_matrix:
+        for row in self.ifmap_demand_matrix[1:, :]:
             tmp_row = row[row != -1]
-            if len(tmp_row) != 0:
-                if out_h_px_cnt == 0:
-                    tmp = tmp_row
-                else:
-                    tmp = np.concatenate((tmp, tmp_row), axis=0)
-                out_h_px_cnt += self.num_out_w_per_step
-                if out_h_px_cnt == self.out_col:
-                    # tmp = tmp.reshape((1, -1))
-                    _, idx = np.unique(tmp, return_index=True)
-                    tmp = tmp[np.sort(idx)]
-                    ret += tmp.tolist()
-                    tmp = []
-                    out_h_px_cnt = 0
+            if out_h_px_cnt == 0:
+                tmp = tmp_row
+            else:
+                tmp = np.concatenate((tmp, tmp_row), axis=0)
+            out_h_px_cnt += self.num_out_w_per_step
+            if out_h_px_cnt >= self.out_col:
+                # tmp = tmp.reshape((1, -1))
+                _, idx = np.unique(tmp, return_index=True)
+                tmp = tmp[np.sort(idx)]
+                ret += tmp.tolist()
+                tmp = []
+                out_h_px_cnt = 0
 
         self.ifmap_prefetch_matrix = np.array(ret).reshape((1, -1))
+        self.ifmap_reads = self.ifmap_prefetch_matrix.shape[1]
 
     #
     def create_filter_prefetch_mat(self):
@@ -184,6 +203,7 @@ class npu_compute_ws:
                 tmp_row = tmp_row[np.sort(idx)]
                 self.filter_prefetch_matrix += tmp_row.tolist()
         self.filter_prefetch_matrix = np.array(self.filter_prefetch_matrix).reshape((1, -1))
+        self.filter_reads = self.filter_prefetch_matrix.shape[1]
 
     #
     def create_demand_matrices(self):
@@ -217,7 +237,6 @@ class npu_compute_ws:
                 if self.dw_flag:
                     if self.Sr == 9:
                         # depthwise 3x3: work on 2x2 output pixels at a time
-                        self.num_out_w_per_step = int((self.num_out_px_per_step / self.num_filters_per_step) / 2)
                         # num_vertical_pixels == 2 (fixed)
                         # ifm_addr_mat:
                         # [px0_ch0]
@@ -234,8 +253,8 @@ class npu_compute_ws:
                         # first time we work on px0(ch0 ~ ch15), px1(ch0 ~ ch15), px56(ch0 ~ ch15), px57(ch0 ~ ch15) start_row_idx = 0
                         # move to next 2x2 output pixels, we work on px2(ch0 ~ ch15), px3(ch0 ~ ch15), px58(ch0 ~ ch15), px59(ch0 ~ ch15) start_row_idx = 2 * 32 = 64
                         # once first two rows are done, we move to the third row, start_row_idx = 2 * 56 * 32 = 3584
-                        start_row_idx = int(j % (self.out_col / 2)) * self.num_out_w_per_step * self.Sc +\
-                                        int(j / (self.out_col / 2)) * self.out_col * self.Sc * 2
+                        start_row_idx = (j % self.out_col_fold) * self.num_out_w_per_step * self.Sc +\
+                                        (j // self.out_col_fold) * self.out_col * self.Sc * self.num_out_h_per_step
                     elif self.Sr == 25:
                         self.num_out_w_per_step = 1
                         # depthwise 5x5: work on 1x1 output pixels at a time
@@ -257,6 +276,10 @@ class npu_compute_ws:
                     num_out_px = int(self.num_out_px_per_step / self.num_filters_per_step)
                     num_ch_per_px = self.num_filters_per_step
                     for px in range(num_out_px):
+                        if self.dw_flag and \
+                            ((start_row_idx % (self.out_col * self.Sc) // self.Sc) + px % self.num_out_w_per_step >= self.out_col or \
+                             start_row_idx // (self.out_col * self.Sc) + px // self.num_out_w_per_step >= self.out_row):
+                            continue
                         for ch in range(num_ch_per_px):
                             # Elaboration: see how start_idx is calculated
                             row_idx = start_row_idx +\
@@ -272,7 +295,7 @@ class npu_compute_ws:
                 else:
                     ifm_to_process = self.ifmap_op_mat[start_row_idx: end_row_idx, :]
                     # count how many IFM elements are read (excluding padding)
-                    self.ifmap_reads += np.count_nonzero(ifm_to_process != -1)
+                    # self.ifmap_reads += np.count_nonzero(ifm_to_process != -1)
                     ifm_to_process = ifm_to_process.tolist()
                 this_fold_demand = (np.ones((self.num_core, self.arr_row * self.arr_col)) * -1).tolist()
 
@@ -287,6 +310,8 @@ class npu_compute_ws:
                         assert end_idx <= self.arr_row * self.arr_col, "end_idx exceeds the maximum index"
 
                         window_idx = c * self.num_filters_per_core + f
+                        if window_idx >= len(ifm_to_process):
+                            break
 
                         if self.ifm_mm == 'broadcast':
                             if window_idx <= filter_delta:
@@ -314,7 +339,7 @@ class npu_compute_ws:
         # 1. separate for each OFM row
         # 2. create a new matrix self.compute_matrix
         # we remove reused elements for each cycle because our NPU can ensure that reused elements stay in buffer
-        ifmap_compute_matrix = self.ifmap_demand_matrix.copy()
+        ifmap_compute_matrix = copy.deepcopy(self.ifmap_demand_matrix)
         for row_idx in range(ifmap_compute_matrix.shape[0]):
             if row_idx == 0:
                 continue
@@ -323,6 +348,7 @@ class npu_compute_ws:
                     continue
                 if ifmap_compute_matrix[row_idx, idx] in ifmap_compute_matrix[row_idx - 1]:
                     self.ifmap_demand_matrix[row_idx, idx] = -1
+        self.ifmap_compute_matrix = ifmap_compute_matrix
 
     #
     def create_filter_demand_mat(self):
@@ -331,60 +357,32 @@ class npu_compute_ws:
         filter_demand_matrix = []
 
         if self.filter_mm == "unicast":
-            num_pixels_per_step = 1
+            num_pixels_w_per_step = 1
+            num_pixels_h_per_step = 1
         elif self.filter_mm == "double":
-            num_pixels_per_step = 2
+            num_pixels_w_per_step = 2
+            num_pixels_h_per_step = 1
         elif self.filter_mm == "broadcast":
-            num_pixels_per_step = self.num_core
+            num_pixels_w_per_step = 2
+            num_pixels_h_per_step = self.num_core // 2
         else:
-            raise ValueError("Mapping Mode must be {'unicast', 'broadcast', 'double'}")
+            raise ValueError("Wrong mapping mode!!!")
+        num_pixels_per_step = num_pixels_w_per_step * num_pixels_h_per_step
 
-        if self.dw_flag:
-            this_T = self.T // self.Sc
-        else:
-            this_T = self.T
+        pixel_h_fold = math.ceil(self.out_row / num_pixels_h_per_step)
+        pixel_w_fold = math.ceil(self.out_col / num_pixels_w_per_step)
 
-        filter_fold = self.Sc // self.num_filters_per_step
-        filter_rest = self.Sc % self.num_filters_per_step
-
-        pixel_fold = this_T // num_pixels_per_step
-        pixel_rest = this_T % num_pixels_per_step
-
-        for idx_f in range(filter_fold):
+        for idx_f in range(self.filter_fold):
+            this_num_filter = min((idx_f + 1) * self.num_filters_per_step, self.Sc) - idx_f * self.num_filters_per_step
             filter_demand_row = [-1] * self.num_pe
             for paste_time in range(num_pixels_per_step):
-                for opx in range(self.num_filters_per_step):
+                for opx in range(this_num_filter):
                     for wpx in range(self.Sr):
                         filter_demand_row[wpx + (opx + self.num_filters_per_step * paste_time) *
                                           self.num_rows_per_filter * self.arr_col] \
                             = wpx + (opx + idx_f * self.num_filters_per_step) * self.Sr
             filter_demand_matrix.append(filter_demand_row)
-            for _ in range(pixel_fold-1):
-                filter_demand_row = [-1] * self.num_pe
-                filter_demand_matrix.append(filter_demand_row)
-            if pixel_rest == 0:
-                pass
-            else:
-                filter_demand_row = [-1] * self.num_pe
-                filter_demand_matrix.append(filter_demand_row)
-
-        if filter_rest == 0:
-            pass
-        else:
-            filter_demand_row = [-1] * self.num_pe
-            for paste_time in range(num_pixels_per_step):
-                for opx in range(filter_rest):
-                    for wpx in range(self.Sr):
-                        filter_demand_row[wpx + (opx + self.num_filters_per_step * paste_time) *
-                                          self.num_rows_per_filter * self.arr_col] \
-                            = wpx + (opx + filter_fold * self.num_filters_per_step) * self.Sr
-            filter_demand_matrix.append(filter_demand_row)
-            for _ in range(pixel_fold-1):
-                filter_demand_row = [-1] * self.num_pe
-                filter_demand_matrix.append(filter_demand_row)
-            if pixel_rest == 0:
-                pass
-            else:
+            for idx_ph in range(pixel_h_fold*pixel_w_fold-1):
                 filter_demand_row = [-1] * self.num_pe
                 filter_demand_matrix.append(filter_demand_row)
 
@@ -394,17 +392,11 @@ class npu_compute_ws:
         self.filter_demand_matrix = np.array(filter_demand_matrix)
 
     def create_ofmap_demand_mat(self):
+        assert self.params_set_flag, 'Parameters are not set'
 
         ofmap_demand_matrix = []
 
         num_row = self.num_core * self.arr_row
-
-        if self.dw_flag:
-            this_T = self.T // self.Sc
-        else:
-            this_T = self.T
-        T_h = int(pow(this_T, 0.5))
-        T_w = int(pow(this_T, 0.5))
 
         if self.filter_mm == "unicast":
             num_pixels_w_per_step = 1
@@ -420,54 +412,28 @@ class npu_compute_ws:
         num_pixels_per_step = num_pixels_w_per_step * num_pixels_h_per_step
         opx_stride = num_row // (self.num_filters_per_step * num_pixels_per_step)
 
-        filter_fold = self.Sc // self.num_filters_per_step
-        filter_rest = self.Sc % self.num_filters_per_step
-
-        pixel_h_fold = T_h // num_pixels_h_per_step
-        pixel_h_rest = T_h % num_pixels_h_per_step
-        pixel_w_fold = T_w // num_pixels_w_per_step
-        pixel_w_rest = T_w % num_pixels_w_per_step
-
-        assert pixel_h_rest == 0
-        assert pixel_w_rest == 0
+        pixel_h_fold = math.ceil(self.out_row / num_pixels_h_per_step)
+        pixel_w_fold = math.ceil(self.out_col / num_pixels_w_per_step)
 
         ofmap_demand_row = [-1] * num_row
         ofmap_demand_matrix.append(ofmap_demand_row)
 
-        for idx_f in range(filter_fold):
-            # ofmap_demand_row = [-1] * num_row
-            # ofmap_demand_matrix.append(ofmap_demand_row)
+        for idx_f in range(self.filter_fold):
+            this_num_filter = min((idx_f + 1) * self.num_filters_per_step, self.Sc) - idx_f * self.num_filters_per_step
             for idx_ph in range(pixel_h_fold):
+                this_px_h = min((idx_ph + 1) * num_pixels_h_per_step, self.out_row) - idx_ph * num_pixels_h_per_step
                 for idx_pw in range(pixel_w_fold):
+                    this_px_w = min((idx_pw + 1) * num_pixels_w_per_step, self.out_col) - idx_pw * num_pixels_w_per_step
                     ofmap_demand_row = [-1] * num_row
-                    for opx_h in range(num_pixels_h_per_step):
-                        for opx_w in range(num_pixels_w_per_step):
-                            for opx_c in range(self.num_filters_per_step):
+                    for opx_h in range(this_px_h):
+                        for opx_w in range(this_px_w):
+                            for opx_c in range(this_num_filter):
                                 ofmap_demand_row[(opx_c + (opx_w + opx_h * num_pixels_w_per_step) *
                                                   self.num_filters_per_step) * opx_stride] = \
-                                    opx_c + (opx_w + opx_h * T_w) * self.Sc + \
+                                    opx_c + (opx_w + opx_h * self.out_col) * self.Sc + \
                                     idx_pw * self.Sc * num_pixels_w_per_step + \
-                                    idx_ph * self.Sc * T_w * num_pixels_h_per_step + \
+                                    idx_ph * self.Sc * self.out_col * num_pixels_h_per_step + \
                                     idx_f * self.num_filters_per_step
-                    ofmap_demand_matrix.append(ofmap_demand_row)
-
-        if filter_rest == 0:
-            pass
-        else:
-            # ofmap_demand_row = [-1] * num_row
-            # ofmap_demand_matrix.append(ofmap_demand_row)
-            for idx_ph in range(pixel_h_fold):
-                for idx_pw in range(pixel_w_fold):
-                    ofmap_demand_row = [-1] * num_row
-                    for opx_h in range(num_pixels_h_per_step):
-                        for opx_w in range(num_pixels_w_per_step):
-                            for opx_c in range(filter_rest):
-                                ofmap_demand_row[(opx_c + (opx_w + opx_h * num_pixels_w_per_step) *
-                                                  self.num_filters_per_step) * opx_stride] = \
-                                    opx_c + (opx_w + opx_h * T_w) * self.Sc + \
-                                    idx_pw * self.Sc * num_pixels_w_per_step + \
-                                    idx_ph * self.Sc * T_w * num_pixels_h_per_step + \
-                                    filter_fold * self.num_filters_per_step
                     ofmap_demand_matrix.append(ofmap_demand_row)
 
         self.ofmap_demand_matrix = np.array(ofmap_demand_matrix)
@@ -501,6 +467,12 @@ class npu_compute_ws:
             self.create_demand_matrices()
 
         return self.ifmap_demand_matrix
+
+    def get_ifmap_compute_mat(self):
+        if not self.demand_mat_ready_flag:
+            self.create_demand_matrices()
+
+        return self.ifmap_compute_matrix
 
     #
     def get_filter_demand_mat(self):
