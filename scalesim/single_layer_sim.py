@@ -241,6 +241,22 @@ class single_layer_sim:
         self.memory_system.print_ofmap_sram_trace(ofmap_sram_filename)
         self.memory_system.print_ofmap_dram_trace(ofmap_dram_filename)
 
+    def save_compute_addr_traces(self, top_path):
+        assert self.params_set_flag, 'Parameters are not set'
+
+        dir_name = top_path + '/layer' + str(self.layer_id)
+        if not os.path.isdir(dir_name):
+            cmd = 'mkdir ' + dir_name
+            os.system(cmd)
+
+        ifmap_filename = dir_name +  '/IFMAP_COMPUTE_ADDR_TRACE.csv'
+        filter_filename = dir_name + '/FILTER_COMPUTE_ADDR_TRACE.csv'
+        ofmap_filename = dir_name +  '/OFMAP_COMPUTE_ADDR_TRACE.csv'
+
+        self.compute_system.print_ifmap_trace(ifmap_filename)
+        self.compute_system.print_filter_trace(filter_filename)
+        self.compute_system.print_ofmap_trace(ofmap_filename)
+
     #
     def calc_report_data(self):
         assert self.runs_ready, 'Runs are not done yet'

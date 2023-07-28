@@ -21,12 +21,15 @@ class simulator:
         self.params_set_flag = False
         self.all_layer_run_done = False
 
+        self.debug_mode = False
+
     #
     def set_params(self,
                    config_obj=cfg(),
                    topo_obj=topo(),
                    top_path="./",
                    verbosity=True,
+                   debug_mode=False,
                    save_trace=True
                    ):
 
@@ -41,6 +44,8 @@ class simulator:
         self.num_layers = self.topo.get_num_layers()
 
         self.params_set_flag = True
+
+        self.debug_mode = debug_mode
 
     #
     def run(self):
@@ -107,6 +112,9 @@ class simulator:
                 single_layer_obj.save_traces(self.top_path)
                 if self.verbose:
                     print('Done!')
+
+            if self.debug_mode:
+                single_layer_obj.save_compute_addr_traces(self.top_path)
 
         self.all_layer_run_done = True
 

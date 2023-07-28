@@ -188,21 +188,22 @@ class npu_compute_conv:
         out_h_px_cnt = 0
         tmp = []
 
-        for row in self.ifmap_demand_matrix[1:, :]:
-            tmp_row = row[row != -1]
-            if out_h_px_cnt == 0:
-                tmp = tmp_row
-            else:
-                tmp = np.concatenate((tmp, tmp_row), axis=0)
-            out_h_px_cnt += self.num_out_w_per_step
-            if out_h_px_cnt == self.width_step:  # FIXME, sometimes less than width_step
-                _, idx = np.unique(tmp, return_index=True)
-                tmp = tmp[np.sort(idx)]
-                ret += tmp.tolist()
-                tmp = []
-                out_h_px_cnt = 0
+        # for row in self.ifmap_demand_matrix[1:, :]:
+        #     tmp_row = row[row != -1]
+        #     if out_h_px_cnt == 0:
+        #         tmp = tmp_row
+        #     else:
+        #         tmp = np.concatenate((tmp, tmp_row), axis=0)
+        #     out_h_px_cnt += self.num_out_w_per_step
+        #     if out_h_px_cnt == self.width_step:  # FIXME, sometimes less than width_step
+        #         _, idx = np.unique(tmp, return_index=True)
+        #         tmp = tmp[np.sort(idx)]
+        #         ret += tmp.tolist()
+        #         tmp = []
+        #         out_h_px_cnt = 0
 
-        self.ifmap_prefetch_matrix = np.array(ret).reshape((1, -1))
+        # self.ifmap_prefetch_matrix = np.array(ret).reshape((1, -1))
+        self.ifmap_prefetch_matrix = self.ifmap_demand_matrix[self.ifmap_demand_matrix != -1].reshape((1, -1))
         self.ifmap_reads = self.ifmap_prefetch_matrix.shape[1]
 
     #
@@ -308,12 +309,12 @@ class npu_compute_conv:
                             mac_used = 0
                             for c in range(self.num_core):
                                 for f in range(self.num_filters_per_core):
-                                    if f >= num_out_ch_to_process:
-                                        break
                                     start_idx = f * self.num_rows_per_filter * self.arr_col
                                     end_idx = start_idx + num_cols_to_process
 
                                     window_idx = c * self.num_filters_per_core + f
+                                    if f >= self.Sc - i * self.num_out_ch_per_group - _ * self.num_filters_per_step:
+                                        break
 
                                     if self.ifm_mm == 'unicast':
                                         if c < num_rows_to_process:
@@ -536,6 +537,23 @@ class npu_compute_conv:
         assert self.demand_mat_ready_flag, 'Computes not ready yet'
         return self.ofmap_writes
 
+    def get_compute_mat(self):
+        if not self.demand_mat_ready_flag:
+            self.create_demand_matrices()
+        
+        return self.ifmap_compute_matrix
+
+    def print_ofmap_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.ofmap_demand_matrix, fmt='%d', delimiter=",")
+
+    def print_ifmap_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.ifmap_demand_matrix, fmt='%d', delimiter=",")
+
+    def print_filter_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.filter_demand_matrix, fmt='%d', delimiter=",")
 
 #
 def skew_matrix(input_matrix_np):

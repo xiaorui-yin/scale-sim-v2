@@ -10,6 +10,7 @@ class scalesim:
                  verbose=True,
                  config='',
                  topology='',
+                 debug_mode=False,
                  input_type_gemm=False):
 
         # Data structures
@@ -30,6 +31,8 @@ class scalesim:
         self.verbose_flag = verbose
         self.run_done_flag = False
         self.logs_generated_flag = False
+
+        self.debug_mode = debug_mode
 
         self.set_params(config_filename=config, topology_filename=topology)
 
@@ -81,6 +84,7 @@ class scalesim:
             topo_obj=self.topo,
             top_path=self.top_path,
             verbosity=self.verbose_flag,
+            debug_mode=self.debug_mode,
             save_trace=save_trace
         )
         self.run_once()

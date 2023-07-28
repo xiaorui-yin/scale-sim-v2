@@ -241,6 +241,11 @@ class read_buffer:
                 if not self.active_buffer_hit(addr):
                     new_addr.append(addr)
 
+            if self.req_gen_bandwidth == 320:
+                b = request_line.shape[0]
+                a = len(new_addr)
+                print(len(new_addr))
+
             # Then check all new elements
             for addr in new_addr:
                 while not self.active_buffer_hit(addr):

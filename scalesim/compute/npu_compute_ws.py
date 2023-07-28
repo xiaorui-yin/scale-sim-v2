@@ -166,28 +166,7 @@ class npu_compute_ws:
     def create_ifmap_prefetch_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
-        # self.ifmap_prefetch_matrix = create_prefetch_mat(self.ifmap_demand_matrix)
-        # all IFM elements in one OFM row are only loaded once (reuse)
-        ret = []
-        out_h_px_cnt = 0
-        tmp = []
-
-        for row in self.ifmap_demand_matrix[1:, :]:
-            tmp_row = row[row != -1]
-            if out_h_px_cnt == 0:
-                tmp = tmp_row
-            else:
-                tmp = np.concatenate((tmp, tmp_row), axis=0)
-            out_h_px_cnt += self.num_out_w_per_step
-            if out_h_px_cnt >= self.out_col:
-                # tmp = tmp.reshape((1, -1))
-                _, idx = np.unique(tmp, return_index=True)
-                tmp = tmp[np.sort(idx)]
-                ret += tmp.tolist()
-                tmp = []
-                out_h_px_cnt = 0
-
-        self.ifmap_prefetch_matrix = np.array(ret).reshape((1, -1))
+        self.ifmap_prefetch_matrix = self.ifmap_demand_matrix[self.ifmap_demand_matrix != -1].reshape((1, -1))
         self.ifmap_reads = self.ifmap_prefetch_matrix.shape[1]
 
     #
@@ -286,10 +265,9 @@ class npu_compute_ws:
                                 math.floor(px / 2) * self.Sc * self.out_col +\
                                 px % 2 * self.Sc + \
                                 i * self.num_filters_per_step + ch
-                            # if px == 0 and ch == 0:
-                            #     ifm_to_process = self.ifmap_op_mat[row_idx, :].reshape((1, -1))
-                            # else:
-                            #     ifm_to_process = np.concatenate((ifm_to_process, self.ifmap_op_mat[row_idx, :].reshape((1, -1))), axis=0)
+
+                            if i * self.num_filters_per_step + ch >= self.Sc:
+                                break
                             ifm_row = self.ifmap_op_mat[row_idx, :].tolist()
                             ifm_to_process.append(ifm_row)
                 else:
@@ -310,7 +288,10 @@ class npu_compute_ws:
                         assert end_idx <= self.arr_row * self.arr_col, "end_idx exceeds the maximum index"
 
                         window_idx = c * self.num_filters_per_core + f
-                        if window_idx >= len(ifm_to_process):
+                        if self.dw_flag:
+                            if window_idx >= len(ifm_to_process):
+                                break
+                        elif window_idx >= self.Sc - i * self.num_filters_per_step:
                             break
 
                         if self.ifm_mm == 'broadcast':
@@ -532,6 +513,23 @@ class npu_compute_ws:
         assert self.demand_mat_ready_flag, 'Computes not ready yet'
         return self.ofmap_writes
 
+    def get_compute_mat(self):
+        if not self.demand_mat_ready_flag:
+            self.create_demand_matrices()
+        
+        return self.ifmap_compute_matrix
+
+    def print_ofmap_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.ofmap_demand_matrix, fmt='%d', delimiter=",")
+
+    def print_ifmap_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.ifmap_demand_matrix, fmt='%d', delimiter=",")
+
+    def print_filter_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.filter_demand_matrix, fmt='%d', delimiter=",")
 
 #
 def skew_matrix(input_matrix_np):

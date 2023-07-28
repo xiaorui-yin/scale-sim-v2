@@ -20,12 +20,17 @@ if __name__ == '__main__':
                         default="conv",
                         help="Type of input topology, gemm: MNK, conv: conv"
                         )
+    parser.add_argument('-d', metavar='debug mode', type=bool,
+                        default=False,
+                        help="Debug Mode, True: output all compute trace files"
+                        )
 
     args = parser.parse_args()
     topology = args.t
     config = args.c
     logpath = args.p
     inp_type = args.i
+    debug_mode = args.d
 
     gemm_input = False
     if inp_type == 'gemm':
@@ -34,6 +39,7 @@ if __name__ == '__main__':
     s = scalesim(save_disk_space=False, verbose=True,
                  config=config,
                  topology=topology,
+                 debug_mode=debug_mode,
                  input_type_gemm=gemm_input
                  )
     s.run_scale(top_path=logpath)

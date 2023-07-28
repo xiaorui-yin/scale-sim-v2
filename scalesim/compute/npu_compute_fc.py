@@ -313,6 +313,17 @@ class npu_compute_fc:
         assert self.demand_mat_ready_flag, 'Computes not ready yet'
         return self.ofmap_writes
 
+    def print_ofmap_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.ofmap_demand_matrix, fmt='%d', delimiter=",")
+
+    def print_ifmap_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.ifmap_demand_matrix, fmt='%d', delimiter=",")
+
+    def print_filter_trace(self, filename):
+        assert self.demand_mat_ready_flag, 'Traces not generated yet'
+        np.savetxt(filename, self.filter_demand_matrix, fmt='%d', delimiter=",")
 
 #
 def skew_matrix(input_matrix_np):

@@ -1,6 +1,6 @@
 Layer name, IFMAP Height, IFMAP Width, Filter Height, Filter Width, Channels, Num Filter, Strides, Paddings, IFMAP Mapping Mode, Filter Mapping Mode, Depthwise,
-inception1x7, 17, 17, 1, 7, 128, 128, 1, [0 6 0 0], unicast, broadcast, others,
-inception7x1, 17, 17, 7, 1, 128, 128, 1, [6 0 0 0], unicast, broadcast, others,
+inception7x1, 17, 17, 7, 1, 32, 32, 1, [6 0 0 0], unicast, broadcast, others,
+inception1x7, 17, 17, 1, 7, 32, 32, 1, [0 6 0 0], unicast, broadcast, others,
 inception5x5, 35, 35, 5, 5, 48, 64, 1, [4 4 0 0], unicast, broadcast, others,
 inception1x3, 8, 8, 1, 3, 384, 384, 1, [1 2 0 0], unicast, broadcast, others,
 inception3x1, 8, 8, 3, 1, 384, 384, 1, [2 1 0 0], unicast, broadcast, others,

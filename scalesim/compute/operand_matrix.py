@@ -181,10 +181,12 @@ class operand_matrix(object):
             col_idx = int((j % (filter_col * channel)) // channel)
 
             # If this is the padded position
-            if ofmap_row == 0 and row_idx < self.pad_t or \
-               ofmap_row == self.ofmap_rows - 1 and row_idx >= filter_row - self.pad_b or \
-               ofmap_col == 0 and col_idx < self.pad_l or \
-               ofmap_col == self.ofmap_cols - 1 and col_idx >= filter_col - self.pad_r:
+            if ofmap_row < math.ceil(self.pad_t / self.row_stride) and row_idx < self.pad_t - ofmap_row or \
+               ofmap_row > self.ofmap_rows - math.ceil(self.pad_b / self.row_stride) and \
+                    row_idx >= filter_row - self.pad_b or \
+               ofmap_col < math.ceil(self.pad_l / self.col_stride) and col_idx < self.pad_l - ofmap_col or \
+               ofmap_col > self.ofmap_cols - math.ceil(self.pad_r / self.col_stride) and \
+                    col_idx >= filter_col - self.pad_r:
                 return -1
             else:
                 # Change this to corresponding ifmap row col for the start of the conv window
