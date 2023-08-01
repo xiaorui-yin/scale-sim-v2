@@ -313,6 +313,17 @@ class npu_compute_fc:
         assert self.demand_mat_ready_flag, 'Computes not ready yet'
         return self.ofmap_writes
 
+    # def get_compute_mat(self):
+    #     if not self.demand_mat_ready_flag:
+    #         self.create_demand_matrices()
+    #     
+    #     return self.ifmap_compute_matrix
+    #
+    # def get_num_filters_per_core(self):
+    #     assert self.params_set_flag, 'Parameters not set yet'
+    #
+    #     return self.num_filters_per_core
+
     def print_ofmap_trace(self, filename):
         assert self.demand_mat_ready_flag, 'Traces not generated yet'
         np.savetxt(filename, self.ofmap_demand_matrix, fmt='%d', delimiter=",")

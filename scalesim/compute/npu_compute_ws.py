@@ -324,7 +324,9 @@ class npu_compute_ws:
         for row_idx in range(ifmap_compute_matrix.shape[0]):
             if row_idx == 0:
                 continue
-            for idx in range(ifmap_compute_matrix.shape[1]):
+            np_row = np.array(ifmap_compute_matrix[row_idx])
+            _, unique_idx = np.unique(np_row, return_index=True)
+            for idx in unique_idx:
                 if ifmap_compute_matrix[row_idx, idx] == -1:
                     continue
                 if ifmap_compute_matrix[row_idx, idx] in ifmap_compute_matrix[row_idx - 1]:
@@ -530,6 +532,17 @@ class npu_compute_ws:
     def print_filter_trace(self, filename):
         assert self.demand_mat_ready_flag, 'Traces not generated yet'
         np.savetxt(filename, self.filter_demand_matrix, fmt='%d', delimiter=",")
+
+    def get_compute_mat(self):
+        if not self.demand_mat_ready_flag:
+            self.create_demand_matrices()
+        
+        return self.ifmap_compute_matrix
+
+    def get_num_filters_per_core(self):
+        assert self.params_set_flag, 'Parameters not set yet'
+
+        return self.num_filters_per_core
 
 #
 def skew_matrix(input_matrix_np):

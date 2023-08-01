@@ -183,26 +183,6 @@ class npu_compute_conv:
     def create_ifmap_prefetch_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
-        # all IFM elements in one OFM row are only loaded once (reuse)
-        ret = []
-        out_h_px_cnt = 0
-        tmp = []
-
-        # for row in self.ifmap_demand_matrix[1:, :]:
-        #     tmp_row = row[row != -1]
-        #     if out_h_px_cnt == 0:
-        #         tmp = tmp_row
-        #     else:
-        #         tmp = np.concatenate((tmp, tmp_row), axis=0)
-        #     out_h_px_cnt += self.num_out_w_per_step
-        #     if out_h_px_cnt == self.width_step:  # FIXME, sometimes less than width_step
-        #         _, idx = np.unique(tmp, return_index=True)
-        #         tmp = tmp[np.sort(idx)]
-        #         ret += tmp.tolist()
-        #         tmp = []
-        #         out_h_px_cnt = 0
-
-        # self.ifmap_prefetch_matrix = np.array(ret).reshape((1, -1))
         self.ifmap_prefetch_matrix = self.ifmap_demand_matrix[self.ifmap_demand_matrix != -1].reshape((1, -1))
         self.ifmap_reads = self.ifmap_prefetch_matrix.shape[1]
 
@@ -300,8 +280,6 @@ class npu_compute_conv:
 
                             for row in ifm_to_process:
                                 assert len(row) == num_cols_to_process, 'IFM demand matrix is not a rectangle'
-                                # count how many IFM elements are read (excluding padding)
-                                # self.ifmap_reads += len(row) - row.count(-1)
 
                             # ==============================================================
                             # Fill MAC cores
@@ -345,7 +323,9 @@ class npu_compute_conv:
         for row_idx in range(len(ifmap_compute_matrix)):
             if row_idx == 0:
                 continue
-            for idx in range(len(ifmap_compute_matrix[0])):
+            np_row = np.array(ifmap_compute_matrix[row_idx])
+            _, unique_idx = np.unique(np_row, return_index=True)
+            for idx in unique_idx:
                 if ifmap_compute_matrix[row_idx][idx] == -1:
                     continue
                 if ifmap_compute_matrix[row_idx][idx] not in ifmap_compute_set[row_idx - 1]:
@@ -542,6 +522,11 @@ class npu_compute_conv:
             self.create_demand_matrices()
         
         return self.ifmap_compute_matrix
+
+    def get_num_filters_per_core(self):
+        assert self.params_set_flag, 'Parameters not set yet'
+
+        return self.num_filters_per_core
 
     def print_ofmap_trace(self, filename):
         assert self.demand_mat_ready_flag, 'Traces not generated yet'

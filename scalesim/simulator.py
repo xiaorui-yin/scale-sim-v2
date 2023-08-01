@@ -57,6 +57,7 @@ class simulator:
             this_layer_sim.set_params(layer_id=i,
                                  config_obj=self.conf,
                                  topology_obj=self.topo,
+                                 debug_mode=self.debug_mode,
                                  verbose=self.verbose)
 
             self.single_layer_sim_object_list.append(this_layer_sim)
@@ -83,42 +84,45 @@ class simulator:
 
             single_layer_obj.run()
 
-            if self.verbose:
-                comp_items = single_layer_obj.get_compute_report_items()
-                comp_cycles = comp_items[0]
-                stall_cycles = comp_items[1]
-                util = comp_items[2]
-                mapping_eff = comp_items[3]
-                ifmap_stalls = comp_items[4]
-                filter_stalls = comp_items[5]
-                print('Compute cycles: ' + str(comp_cycles))
-                print('Stall cycles: ' + str(stall_cycles))
-                print('     IFM Stall cycles: ' + str(ifmap_stalls))
-                print('     Filter Stall cycles: ' + str(filter_stalls))
-                print('Overall utilization: ' + "{:.2f}".format(util) +'%')
-                print('MAC Core Mapping efficiency: ' + "{:.2f}".format(mapping_eff) +'%')
-
-                avg_bw_items = single_layer_obj.get_bandwidth_report_items()
-                avg_ifmap_bw = avg_bw_items[3]
-                avg_filter_bw = avg_bw_items[4]
-                avg_ofmap_bw = avg_bw_items[5]
-                print('Average IFMAP SRAM BW: ' + "{:.3f}".format(avg_ifmap_bw) + ' bytes/cycle')
-                print('Average Filter SRAM BW: ' + "{:.3f}".format(avg_filter_bw) + ' bytes/cycle')
-                print('Average OFMAP SRAM BW: ' + "{:.3f}".format(avg_ofmap_bw) + ' bytes/cycle')
-
-            if self.save_trace:
+            if not self.debug_mode:
                 if self.verbose:
-                    print('Saving traces: ', end='')
-                single_layer_obj.save_traces(self.top_path)
-                if self.verbose:
-                    print('Done!')
+                    comp_items = single_layer_obj.get_compute_report_items()
+                    comp_cycles = comp_items[0]
+                    stall_cycles = comp_items[1]
+                    util = comp_items[2]
+                    mapping_eff = comp_items[3]
+                    ifmap_stalls = comp_items[4]
+                    filter_stalls = comp_items[5]
+                    print('Compute cycles: ' + str(comp_cycles))
+                    print('Stall cycles: ' + str(stall_cycles))
+                    print('     IFM Stall cycles: ' + str(ifmap_stalls))
+                    print('     Filter Stall cycles: ' + str(filter_stalls))
+                    print('Overall utilization: ' + "{:.2f}".format(util) +'%')
+                    print('MAC Core Mapping efficiency: ' + "{:.2f}".format(mapping_eff) +'%')
 
-            if self.debug_mode:
-                single_layer_obj.save_compute_addr_traces(self.top_path)
+                    avg_bw_items = single_layer_obj.get_bandwidth_report_items()
+                    avg_ifmap_bw = avg_bw_items[3]
+                    avg_filter_bw = avg_bw_items[4]
+                    avg_ofmap_bw = avg_bw_items[5]
+                    print('Average IFMAP SRAM BW: ' + "{:.3f}".format(avg_ifmap_bw) + ' bytes/cycle')
+                    print('Average Filter SRAM BW: ' + "{:.3f}".format(avg_filter_bw) + ' bytes/cycle')
+                    print('Average OFMAP SRAM BW: ' + "{:.3f}".format(avg_ofmap_bw) + ' bytes/cycle')
+
+                if self.save_trace:
+                    if self.verbose:
+                        print('Saving traces: ', end='')
+                    single_layer_obj.save_traces(self.top_path)
+                    if self.verbose:
+                        print('Done!')
+
+            # if self.debug_mode:
+            #     single_layer_obj.save_compute_addr_traces(self.top_path)
 
         self.all_layer_run_done = True
 
-        self.generate_reports()
+        # TODO: debug_mode trace save
+        if not self.debug_mode:
+            self.generate_reports()
 
     #
     def generate_reports(self):

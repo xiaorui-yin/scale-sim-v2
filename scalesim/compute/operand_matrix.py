@@ -168,6 +168,11 @@ class operand_matrix(object):
         Ew = self.ofmap_cols
         channel = self.num_input_channels
 
+        ofm_dims = (self.ofmap_rows, self.ofmap_cols)
+        filter_dims = (filter_row, filter_col)
+        stride = (r_stride, c_stride)
+        padding = (self.pad_t, self.pad_r, self.pad_b, self.pad_l)
+
         if not self.dw_flag:
             # Calculate the row and col in the Eh X Ew mat
             ofmap_row = int(math.floor(i / Ew))
@@ -181,12 +186,9 @@ class operand_matrix(object):
             col_idx = int((j % (filter_col * channel)) // channel)
 
             # If this is the padded position
-            if ofmap_row < math.ceil(self.pad_t / self.row_stride) and row_idx < self.pad_t - ofmap_row or \
-               ofmap_row > self.ofmap_rows - math.ceil(self.pad_b / self.row_stride) and \
-                    row_idx >= filter_row - self.pad_b or \
-               ofmap_col < math.ceil(self.pad_l / self.col_stride) and col_idx < self.pad_l - ofmap_col or \
-               ofmap_col > self.ofmap_cols - math.ceil(self.pad_r / self.col_stride) and \
-                    col_idx >= filter_col - self.pad_r:
+            ofm_idx = (ofmap_row, ofmap_col)
+            window_idx = (row_idx, col_idx)
+            if is_padded(ofm_dims, ofm_idx, window_idx, padding, filter_dims, stride):
                 return -1
             else:
                 # Change this to corresponding ifmap row col for the start of the conv window
@@ -208,11 +210,10 @@ class operand_matrix(object):
             col_idx = int(j % filter_col)
 
             # If this is the padded position
-            if ofmap_row == 0 and row_idx < self.pad_t or \
-               ofmap_row == self.ofmap_rows - 1 and row_idx >= filter_row - self.pad_b or \
-               ofmap_col == 0 and col_idx < self.pad_l or \
-               ofmap_col == self.ofmap_cols - 1 and col_idx >= filter_col - self.pad_r:
-                 return -1
+            ofm_idx = (ofmap_row, ofmap_col)
+            window_idx = (row_idx, col_idx)
+            if is_padded(ofm_dims, ofm_idx, window_idx, padding, filter_dims, stride):
+                return -1
             else:
                 # Change this to corresponding ifmap row col for the start of the conv window
                 i_row = ofmap_row * r_stride - self.pad_t + row_idx
@@ -389,6 +390,37 @@ class operand_matrix(object):
         return self.ifmap_addr_matrix, \
                self.filter_addr_matrix, \
                self.ofmap_addr_matrix
+
+
+def is_padded(ofm_dim, ofm_idx, window_idx, pad, filter_size, stride):
+    ofm_rows, ofm_cols = ofm_dim
+    ofm_row_idx, ofm_col_idx = ofm_idx
+    window_row_idx, window_col_idx = window_idx
+    pad_t, pad_r, pad_b, pad_l = pad
+    row_stride, col_stride = stride
+    filter_row, filter_col = filter_size
+
+    # Top padding
+    if ofm_row_idx < math.ceil(pad_t / row_stride):
+        if window_row_idx < pad_t - (ofm_row_idx * row_stride):
+            return True
+
+    # Bottom padding
+    if ofm_row_idx >= ofm_rows - math.ceil(pad_b / row_stride):
+        if window_row_idx >= filter_row - (pad_b - (ofm_rows - ofm_row_idx - 1) * row_stride):
+            return True
+
+    # Left padding
+    if ofm_col_idx < math.ceil(pad_l / col_stride):
+        if window_col_idx < pad_l - (ofm_col_idx * col_stride):
+            return True
+
+    # Right padding
+    if ofm_col_idx >= ofm_cols - math.ceil(pad_r / col_stride):
+        if window_col_idx >= filter_col - (pad_r - (ofm_cols - ofm_col_idx - 1) * col_stride):
+            return True
+
+    return False
 
 
 if __name__ == '__main__':

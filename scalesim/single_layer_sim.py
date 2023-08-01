@@ -10,6 +10,8 @@ from scalesim.compute.npu_compute_ws import npu_compute_ws
 from scalesim.compute.npu_compute_conv import npu_compute_conv
 from scalesim.memory.double_buffered_scratchpad_mem import double_buffered_scratchpad as mem_dbsp
 
+from compute_sim import compute_sim
+
 
 class single_layer_sim:
     def __init__(self):
@@ -67,6 +69,8 @@ class single_layer_sim:
         self.ofmap_dram_stop_cycle = 0
         self.ofmap_dram_writes = 0
 
+        self.debug_mode = False
+
         self.params_set_flag = False
         self.memory_system_ready_flag = False
         self.runs_ready = False
@@ -75,6 +79,7 @@ class single_layer_sim:
     def set_params(self,
                    layer_id=0,
                    config_obj=cfg(), topology_obj=topo(),
+                   debug_mode=False,
                    verbose=True):
 
         self.layer_id = layer_id
@@ -97,6 +102,8 @@ class single_layer_sim:
         arr_dims = self.config.get_array_dims()
         self.num_mac_unit = arr_dims[0] * arr_dims[1] * arr_dims[2]
         self.verbose = verbose
+
+        self.debug_mode = debug_mode
 
         self.params_set_flag = True
 
@@ -154,66 +161,76 @@ class single_layer_sim:
         ifmap_prefetch_mat, filter_prefetch_mat = self.compute_system.get_prefetch_matrices()
         ifmap_demand_mat, filter_demand_mat, ofmap_demand_mat = self.compute_system.get_demand_matrices()
         #print('DEBUG: Compute operations done')
-        # 2. Setup the memory system and run the demands through it to find any memory bottleneck and generate traces
 
-        # 2.1 Setup the memory system if it was not setup externally
-        if not self.memory_system_ready_flag:
-            word_size = 1           # bytes, this can be incorporated in the config file
-            active_buf_frac = 0.5   # This can be incorporated in the config as well
+        if not self.debug_mode:
+            # 2. Setup the memory system and run the demands through it to find any memory bottleneck and generate traces
 
-            ifmap_buf_size_kb, filter_buf_size_kb, ofmap_buf_size_kb = self.config.get_mem_sizes()
-            # ifmap_buf_size_bytes = 1024 * ifmap_buf_size_kb
-            # filter_buf_size_bytes = 1024 * filter_buf_size_kb
-            # ofmap_buf_size_bytes = 1024 * ofmap_buf_size_kb
-            ifmap_buf_size_bytes = ifmap_buf_size_kb
-            filter_buf_size_bytes = filter_buf_size_kb * 2
-            ofmap_buf_size_bytes = ofmap_buf_size_kb
+            # 2.1 Setup the memory system if it was not setup externally
+            if not self.memory_system_ready_flag:
+                word_size = 1           # bytes, this can be incorporated in the config file
+                active_buf_frac = 0.5   # This can be incorporated in the config as well
 
-            ifmap_backing_bw = 1
-            filter_backing_bw = 1
-            ofmap_backing_bw = 1
-            estimate_bandwidth_mode = False
-            if self.config.use_user_dram_bandwidth():
-                bws = self.config.get_bandwidths_as_list()
-                # TODO use config to pass or use multi-bank
-                ifmap_backing_bw = 320
-                filter_backing_bw = 32
-                ofmap_backing_bw = 64
-                # ifmap_backing_bw = bws[0]
-                # filter_backing_bw = bws[0]
-                # ofmap_backing_bw = bws[0]
+                ifmap_buf_size_kb, filter_buf_size_kb, ofmap_buf_size_kb = self.config.get_mem_sizes()
+                # ifmap_buf_size_bytes = 1024 * ifmap_buf_size_kb
+                # filter_buf_size_bytes = 1024 * filter_buf_size_kb
+                # ofmap_buf_size_bytes = 1024 * ofmap_buf_size_kb
+                ifmap_buf_size_bytes = ifmap_buf_size_kb
+                filter_buf_size_bytes = filter_buf_size_kb * 2
+                ofmap_buf_size_bytes = ofmap_buf_size_kb
 
-            else:
-                dataflow = self.config.get_dataflow()
-                num_cores, arr_row, arr_col = self.config.get_array_dims()
-                estimate_bandwidth_mode = True
+                ifmap_backing_bw = 1
+                filter_backing_bw = 1
+                ofmap_backing_bw = 1
+                estimate_bandwidth_mode = False
+                if self.config.use_user_dram_bandwidth():
+                    bws = self.config.get_bandwidths_as_list()
+                    # TODO use config to pass or use multi-bank
+                    ifmap_backing_bw = 320
+                    filter_backing_bw = 32
+                    ofmap_backing_bw = 64
+                    # ifmap_backing_bw = bws[0]
+                    # filter_backing_bw = bws[0]
+                    # ofmap_backing_bw = bws[0]
 
-                # The number 10 elems per cycle is arbitrary
-                ifmap_backing_bw = 10
-                filter_backing_bw = 10
-                ofmap_backing_bw = num_cores * arr_col
+                else:
+                    dataflow = self.config.get_dataflow()
+                    num_cores, arr_row, arr_col = self.config.get_array_dims()
+                    estimate_bandwidth_mode = True
 
-            self.memory_system.set_params(
-                    word_size=word_size,
-                    ifmap_buf_size_bytes=ifmap_buf_size_bytes,
-                    filter_buf_size_bytes=filter_buf_size_bytes,
-                    ofmap_buf_size_bytes=ofmap_buf_size_bytes,
-                    rd_buf_active_frac=active_buf_frac, wr_buf_active_frac=active_buf_frac,
-                    ifmap_backing_buf_bw=ifmap_backing_bw,
-                    filter_backing_buf_bw=filter_backing_bw,
-                    ofmap_backing_buf_bw=ofmap_backing_bw,
-                    verbose=self.verbose,
-                    estimate_bandwidth_mode=estimate_bandwidth_mode
-            )
+                    # The number 10 elems per cycle is arbitrary
+                    ifmap_backing_bw = 10
+                    filter_backing_bw = 10
+                    ofmap_backing_bw = num_cores * arr_col
 
-        # 2.2 Install the prefetch matrices to the read buffers to finish setup
-        if self.config.use_user_dram_bandwidth() :
-            self.memory_system.set_read_buf_prefetch_matrices(ifmap_prefetch_mat=ifmap_prefetch_mat,
-                                                              filter_prefetch_mat=filter_prefetch_mat)
+                self.memory_system.set_params(
+                        word_size=word_size,
+                        ifmap_buf_size_bytes=ifmap_buf_size_bytes,
+                        filter_buf_size_bytes=filter_buf_size_bytes,
+                        ofmap_buf_size_bytes=ofmap_buf_size_bytes,
+                        rd_buf_active_frac=active_buf_frac, wr_buf_active_frac=active_buf_frac,
+                        ifmap_backing_buf_bw=ifmap_backing_bw,
+                        filter_backing_buf_bw=filter_backing_bw,
+                        ofmap_backing_buf_bw=ofmap_backing_bw,
+                        verbose=self.verbose,
+                        estimate_bandwidth_mode=estimate_bandwidth_mode
+                )
 
-        # 2.3 Start sending the requests through the memory system until
-        # all the OFMAP memory requests have been serviced
-        self.memory_system.service_memory_requests(ifmap_demand_mat, filter_demand_mat, ofmap_demand_mat)
+            # 2.2 Install the prefetch matrices to the read buffers to finish setup
+            if self.config.use_user_dram_bandwidth() :
+                self.memory_system.set_read_buf_prefetch_matrices(ifmap_prefetch_mat=ifmap_prefetch_mat,
+                                                                  filter_prefetch_mat=filter_prefetch_mat)
+
+            # 2.3 Start sending the requests through the memory system until
+            # all the OFMAP memory requests have been serviced
+            self.memory_system.service_memory_requests(ifmap_demand_mat, filter_demand_mat, ofmap_demand_mat)
+        else:
+            comp = compute_sim()
+            comp.set_params(self.config, self.topo, self.layer_id)
+            ifm_compute_mat = self.compute_system.get_compute_mat()
+            out_sum_level = self.compute_system.get_num_filters_per_core()
+            comp.load_trace(ifm_compute_mat, ofmap_demand_mat, filter_demand_mat, out_sum_level)
+
+            comp.run()
 
         self.runs_ready = True
 
