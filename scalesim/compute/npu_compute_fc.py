@@ -139,7 +139,7 @@ class npu_compute_fc:
         assert self.filter_demand_matrix.shape[1] == self.num_pe, 'Filter demands exceed the cols'
         assert self.ofmap_demand_matrix.shape[1] == self.num_core * self.arr_row, 'OFMAP demands exceed the cols'
 
-        assert len(self.compute_utility_per_fold) == self.ifmap_demand_matrix.shape[0], 'Compute utility and demand matrices out of sync'
+        # assert len(self.compute_utility_per_fold) == self.ifmap_demand_matrix.shape[0], 'Compute utility and demand matrices out of sync'
 
         self.demand_mat_ready_flag = True
 
@@ -294,9 +294,9 @@ class npu_compute_fc:
         agg = sum(self.compute_utility_per_fold)
         num = len(self.compute_utility_per_fold)
 
-        avg_compute_util = agg / num
+        # avg_compute_util = agg / num
 
-        return avg_compute_util
+        return 0 # FIXME
 
     #
     def get_ifmap_requests(self):

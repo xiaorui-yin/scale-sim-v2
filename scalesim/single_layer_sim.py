@@ -8,6 +8,7 @@ from scalesim.compute.systolic_compute_ws import systolic_compute_ws
 from scalesim.compute.systolic_compute_is import systolic_compute_is
 from scalesim.compute.npu_compute_ws import npu_compute_ws
 from scalesim.compute.npu_compute_conv import npu_compute_conv
+from scalesim.compute.npu_compute_fc import npu_compute_fc
 from scalesim.memory.double_buffered_scratchpad_mem import double_buffered_scratchpad as mem_dbsp
 
 from compute_sim import compute_sim
@@ -144,6 +145,19 @@ class single_layer_sim:
                                            dw_flag=dw_flag,
                                            out_col=out_col,
                                            width_step=width_step,
+                                           ifmap_op_mat=ifmap_op_mat,
+                                           filter_op_mat=filter_op_mat,
+                                           ofmap_op_mat=ofmap_op_mat)
+        elif self.topo.get_layer_fc_flag(self.layer_id):
+            self.compute_system = npu_compute_fc()
+            f_h, f_w = self.topo.get_filter_size(self.layer_id)
+            filter_size = f_w * f_h
+            self.compute_system.set_params(config_obj=self.config,
+                                           ifm_mm=ifm_mm,
+                                           filter_mm=filter_mm,
+                                           filter_size=filter_size,
+                                           dw_flag=dw_flag,
+                                           out_col=out_col,
                                            ifmap_op_mat=ifmap_op_mat,
                                            filter_op_mat=filter_op_mat,
                                            ofmap_op_mat=ofmap_op_mat)

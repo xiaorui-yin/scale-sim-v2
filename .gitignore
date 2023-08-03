@@ -12,3 +12,5 @@ topologies/*.zip
 */.DS_Store
 */*/.DS_Store
 */*/*/.DS_Store
+
+width_step_test

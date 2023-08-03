@@ -53,20 +53,26 @@ class compute_sim:
 
         # TODO: Deconv (dilation)
         # dilation = 0
-        golden_model = Conv2d(in_ch, out_ch, (filter_h, filter_w), stride, groups=group, bias=False)
+        golden_model = Conv2d(in_ch, out_ch, (filter_h, filter_w), stride, groups=group, bias=False).eval()
 
         # Randomize conv2d weight
         golden_model.weight.data = torch.randn_like(golden_model.weight.data)
         self.kernel = golden_model.weight.data
+        # Reshape to CoxHxWxCi
+        self.kernel = torch.permute(self.kernel, (0, 2, 3, 1))
 
         # Apply padding
         self.ifm = torch.randn(ifm_dim)
         input_tensor = torch.nn.functional.pad(self.ifm, (pad_l, pad_r, pad_t, pad_b))
+        # Reshape to HWC
+        self.ifm = torch.permute(self.ifm, (1, 2, 0))
 
         # Generate golden OFM results
         self.ofm = golden_model(input_tensor.unsqueeze(0)).squeeze(0)
+        # Reshape to HWC
+        self.ofm = torch.permute(self.ofm, (1, 2, 0))
 
-        # Reshape to one-dimensional, since address trace matries contain flattend addresses
+        # Reshape to one-dimensional, since address trace matrices contain flattened addresses
         self.ifm = self.ifm.reshape((-1,))
         self.ofm = self.ofm.reshape((-1,))
         self.kernel = self.kernel.reshape((-1,))
@@ -81,8 +87,8 @@ class compute_sim:
 
         self.out_sum_level = out_sum_level
 
-        assert self.ifm_trace.shape[0] == self.ofm_trace.shape[0], "Trace length dismatch"
-        assert self.ifm_trace.shape[0] == self.kernel_trace.shape[0], "Trace length dismatch"
+        assert self.ifm_trace.shape[0] == self.ofm_trace.shape[0], "Trace length mismatch"
+        assert self.ifm_trace.shape[0] == self.kernel_trace.shape[0], "Trace length mismatch"
 
         self.trace_load_flag = True
 
@@ -136,10 +142,11 @@ class compute_sim:
                 weight_reg = kernel
 
         print("=================== Simulation Results Check Start  ===================")
-        if torch.equal(sim_ofm, self.ofm):
+        if not torch.allclose(sim_ofm, self.ofm, atol=1e-5):
             print("ERROR: results mismatch")
             mismatch = torch.nonzero(sim_ofm != self.ofm)
-            print("Mismatch address: ", mismatch)
+            print("Mismatch address: ")
+            print(mismatch)
         else:
             print("SUCCESS")
 

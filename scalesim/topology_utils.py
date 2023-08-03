@@ -238,7 +238,7 @@ class topologies(object):
             if depthwise == 'true':
                 num_mac = ofmap_h * ofmap_w * filt_h * filt_w * num_ch
                 window_size = filt_h * filt_w
-            elif depthwise == 'false' or depthwise == 'others':
+            elif depthwise == 'false' or depthwise == 'others' or depthwise == 'fc':
                 num_mac = ofmap_h * ofmap_w * filt_h * filt_w * num_ch * num_filt
                 window_size = filt_h * filt_w * num_ch
             else:
@@ -379,6 +379,13 @@ class topologies(object):
 
         conv_flag = self.topo_arrays[layer_id][12] == 'others'
         return conv_flag
+
+    def get_layer_fc_flag(self, layer_id=0):
+        if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
+            print("ERROR: topologies.get_layer_conv_flag: Invalid layer id")
+
+        fc_flag = self.topo_arrays[layer_id][12] == 'fc'
+        return fc_flag
 
     def get_filter_size(self, layer_id=0):
         if not (self.topo_load_flag or self.num_layers - 1 < layer_id):

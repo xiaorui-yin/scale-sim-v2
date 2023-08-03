@@ -5,10 +5,33 @@ Array Size: 	4x16x9
 SRAM IFMAP (kB): 	640
 SRAM Filter (kB): 	160
 SRAM OFMAP (kB): 	64
-CSV file path: 	topologies/user/test.csv
+CSV file path: 	topologies/user/test_width_step.csv
 Number of Remote Memory Banks: 	1
 Bandwidth: 	10
 Working in USE USER BANDWIDTH mode.
 ====================================================
 
 Running Layer 0
+Compute cycles: 2048
+Stall cycles: 0
+     IFM Stall cycles: 0.0
+     Filter Stall cycles: 0.0
+Overall utilization: 88.89%
+MAC Core Mapping efficiency: 88.85%
+Average IFMAP SRAM BW: 64.031 bytes/cycle
+Average Filter SRAM BW: 127.922 bytes/cycle
+Average OFMAP SRAM BW: 32.016 bytes/cycle
+Saving traces: Done!
+
+Running Layer 1
+Compute cycles: 2440
+Stall cycles: 392
+     IFM Stall cycles: 392.0
+     Filter Stall cycles: 0.0
+Overall utilization: 83.93%
+MAC Core Mapping efficiency: 99.95%
+Average IFMAP SRAM BW: 318.821 bytes/cycle
+Average Filter SRAM BW: 120.819 bytes/cycle
+Average OFMAP SRAM BW: 3.368 bytes/cycle
+Saving traces: Done!
+************ SCALE SIM Run Complete ****************
