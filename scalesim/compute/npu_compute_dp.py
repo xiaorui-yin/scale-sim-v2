@@ -5,7 +5,7 @@ import copy
 from scalesim.scale_config import scale_config as cfg
 
 
-class npu_compute_ws:
+class npu_compute_dp:
     def __init__(self):
         # Params set by user
         self.config = cfg()

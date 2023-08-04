@@ -15,7 +15,6 @@ class npu_compute_conv:
 
         self.ifm_mm = 'broadcast'
         self.filter_mm = 'broadcast'
-        self.dw_flag = False
 
         self.filter_size = 0
         self.num_in_ch = 0
@@ -87,7 +86,6 @@ class npu_compute_conv:
                    ifm_mm='broadcast',
                    filter_mm='broadcast',
                    filter_size=0,
-                   dw_flag=False,
                    out_col=0,
                    width_step=0,
                    ifmap_op_mat=np.zeros((1,1)),
@@ -102,7 +100,6 @@ class npu_compute_conv:
 
         self.ifm_mm = ifm_mm
         self.filter_mm = filter_mm
-        self.dw_flag = dw_flag
         self.filter_size = filter_size
         self.out_col = out_col
 
@@ -174,7 +171,6 @@ class npu_compute_conv:
         self.out_row_fold = math.ceil(self.out_row / self.num_out_h_per_step)
         self.out_col_fold = math.ceil(self.out_col / (self.num_out_w_per_step * self.width_step))
         self.out_px_fold = math.ceil(self.out_row_fold * self.out_col_fold)
-        assert self.dw_flag is False, "Not a depthwise convolution"
 
         self.params_set_flag = True
 

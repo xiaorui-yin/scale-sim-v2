@@ -6,7 +6,7 @@ from scalesim.compute.operand_matrix import operand_matrix as opmat
 from scalesim.compute.systolic_compute_os import systolic_compute_os
 from scalesim.compute.systolic_compute_ws import systolic_compute_ws
 from scalesim.compute.systolic_compute_is import systolic_compute_is
-from scalesim.compute.npu_compute_ws import npu_compute_ws
+from scalesim.compute.npu_compute_dp import npu_compute_dp
 from scalesim.compute.npu_compute_conv import npu_compute_conv
 from scalesim.compute.npu_compute_fc import npu_compute_fc
 from scalesim.memory.double_buffered_scratchpad_mem import double_buffered_scratchpad as mem_dbsp
@@ -21,7 +21,7 @@ class single_layer_sim:
         self.config = cfg()
 
         self.op_mat_obj = opmat()
-        self.compute_system = npu_compute_ws()
+        self.compute_system = npu_compute_conv()
         self.memory_system = mem_dbsp()
 
         self.verbose = True
@@ -96,7 +96,7 @@ class single_layer_sim:
         if self.dataflow == 'os':
             self.compute_system = systolic_compute_os()
         elif self.dataflow == 'ws':
-            self.compute_system = npu_compute_ws()
+            self.compute_system = npu_compute_conv()
         elif self.dataflow == 'is':
             self.compute_system = systolic_compute_is()
 
@@ -142,7 +142,6 @@ class single_layer_sim:
                                            ifm_mm=ifm_mm,
                                            filter_mm=filter_mm,
                                            filter_size=filter_size,
-                                           dw_flag=dw_flag,
                                            out_col=out_col,
                                            width_step=width_step,
                                            ifmap_op_mat=ifmap_op_mat,
@@ -161,7 +160,8 @@ class single_layer_sim:
                                            ifmap_op_mat=ifmap_op_mat,
                                            filter_op_mat=filter_op_mat,
                                            ofmap_op_mat=ofmap_op_mat)
-        else:
+        elif self.topo.get_layer_dp_flag(self.layer_id):
+            self.compute_system = npu_compute_dp()
             self.compute_system.set_params(config_obj=self.config,
                                            ifm_mm=ifm_mm,
                                            filter_mm=filter_mm,
@@ -184,30 +184,23 @@ class single_layer_sim:
                 word_size = 1           # bytes, this can be incorporated in the config file
                 active_buf_frac = 0.5   # This can be incorporated in the config as well
 
-                ifmap_buf_size_kb, filter_buf_size_kb, ofmap_buf_size_kb = self.config.get_mem_sizes()
-                # ifmap_buf_size_bytes = 1024 * ifmap_buf_size_kb
-                # filter_buf_size_bytes = 1024 * filter_buf_size_kb
-                # ofmap_buf_size_bytes = 1024 * ofmap_buf_size_kb
-                ifmap_buf_size_bytes = ifmap_buf_size_kb
-                filter_buf_size_bytes = filter_buf_size_kb * 2
-                ofmap_buf_size_bytes = ofmap_buf_size_kb
+                ifmap_buf_size_b, filter_buf_size_b, ofmap_buf_size_b = self.config.get_mem_sizes()
+                ifmap_buf_size_bytes = ifmap_buf_size_b
+                filter_buf_size_bytes = filter_buf_size_b * 2
+                ofmap_buf_size_bytes = ofmap_buf_size_b
 
                 ifmap_backing_bw = 1
                 filter_backing_bw = 1
                 ofmap_backing_bw = 1
                 estimate_bandwidth_mode = False
                 if self.config.use_user_dram_bandwidth():
-                    bws = self.config.get_bandwidths_as_list()
-                    # TODO use config to pass or use multi-bank
-                    ifmap_backing_bw = 320
-                    filter_backing_bw = 32
-                    ofmap_backing_bw = 64
-                    # ifmap_backing_bw = bws[0]
-                    # filter_backing_bw = bws[0]
-                    # ofmap_backing_bw = bws[0]
-
+                    sram_bw = self.config.get_bandwidths_as_list()
+                    ifm_bw = self.topo.get_ifm_bw(self.layer_id)
+                    assert ifm_bw < sram_bw, "Wrong SRAM bandwidth configuration"
+                    ifmap_backing_bw = ifm_bw
+                    filter_backing_bw = sram_bw - ifm_bw
+                    ofmap_backing_bw = 64  # we don't care
                 else:
-                    dataflow = self.config.get_dataflow()
                     num_cores, arr_row, arr_col = self.config.get_array_dims()
                     estimate_bandwidth_mode = True
 

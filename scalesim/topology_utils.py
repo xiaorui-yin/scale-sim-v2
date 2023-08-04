@@ -158,12 +158,9 @@ class topologies(object):
         for i in range(1, len(elems)):
             val = str(elems[i]).strip()
             if i in range(1, 9):
-                if i == 7:  # TODO support user defined strides
-                    val = int(val)
-                    # stride_w
-                    entry.append(val)
-                    # stride_h
-                    entry.append(val)
+                if i == 7:
+                    # stride_h, stride_w
+                    entry.append([int(x) for x in val.strip('[]').split()])
                 elif i == 8:
                     # pad_t pad_l pad_b pad_r
                     entry.append([int(x) for x in val.strip('[]').split()])
@@ -217,16 +214,18 @@ class topologies(object):
             filt_w = array[4]
             num_ch   = array[5]
             num_filt = array[6]
-            stride_h = array[7]
-            stride_w = array[8]
-            paddings = array[9]
-            depthwise = array[12]
+            strides = array[7]
+            paddings = array[8]
+            op_type = array[11]
+
+            stride_h = strides[0]
+            stride_w = strides[1]
+
             pad_t = paddings[0]
             pad_l = paddings[1]
             pad_b = paddings[2]
             pad_r = paddings[3]
-            # ofmap_h = int(math.ceil((ifmap_h - filt_h + stride_h) / stride_h))
-            # ofmap_w = int(math.ceil((ifmap_w - filt_w + stride_w) / stride_w))
+
             ofmap_h = int((ifmap_h - filt_h + pad_t + pad_b) / stride_h + 1)
             ofmap_w = int((ifmap_w - filt_w + pad_r + pad_l) / stride_w + 1)
             assert ((ifmap_h - filt_h + pad_t + pad_b) / stride_h).is_integer() and \
@@ -235,14 +234,14 @@ class topologies(object):
 
             num_mac = 0
             window_size = 0
-            if depthwise == 'true':
+            if op_type == 'dp':
                 num_mac = ofmap_h * ofmap_w * filt_h * filt_w * num_ch
                 window_size = filt_h * filt_w
-            elif depthwise == 'false' or depthwise == 'others' or depthwise == 'fc':
+            elif op_type == 'conv' or op_type == 'fc':
                 num_mac = ofmap_h * ofmap_w * filt_h * filt_w * num_ch * num_filt
                 window_size = filt_h * filt_w * num_ch
             else:
-                raise ValueError('Invalid depthwise value (false, true, others)')
+                raise ValueError('Invalid Operation Type value (dp, conv, fc)')
 
             entry = [ofmap_h, ofmap_w, num_mac, window_size, filt_h, filt_w]
             self.layers_calculated_hyperparams.append(entry)
@@ -348,14 +347,14 @@ class topologies(object):
             print("ERROR: topologies.get_layer_strides: Invalid layer id")
 
         layer_params = self.topo_arrays[layer_id]
-        return layer_params[7:9]
+        return layer_params[7]
 
     def get_layer_mapping_mode(self, layer_id=0):
         if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
             print("ERROR: topologies.get_layer_params: Invalid layer id")
             return
-        ifm_mm = self.topo_arrays[layer_id][10]
-        filter_mm = self.topo_arrays[layer_id][11]
+        ifm_mm = self.topo_arrays[layer_id][9]
+        filter_mm = self.topo_arrays[layer_id][10]
 
         return ifm_mm, filter_mm
 
@@ -363,29 +362,37 @@ class topologies(object):
         if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
             print("ERROR: topologies.get_layer_paddings: Invalid layer id")
 
-        paddings = self.topo_arrays[layer_id][9]
+        paddings = self.topo_arrays[layer_id][8]
         return paddings
 
     def get_layer_dw_flag(self, layer_id=0):
         if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
             print("ERROR: topologies.get_layer_dw_flag: Invalid layer id")
 
-        dw_flag = self.topo_arrays[layer_id][12] == 'true'
+        dw_flag = self.topo_arrays[layer_id][11] == 'dp'
         return dw_flag
 
     def get_layer_conv_flag(self, layer_id=0):
         if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
             print("ERROR: topologies.get_layer_conv_flag: Invalid layer id")
 
-        conv_flag = self.topo_arrays[layer_id][12] == 'others'
+        conv_flag = self.topo_arrays[layer_id][11] == 'conv'
         return conv_flag
 
     def get_layer_fc_flag(self, layer_id=0):
         if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
             print("ERROR: topologies.get_layer_conv_flag: Invalid layer id")
 
-        fc_flag = self.topo_arrays[layer_id][12] == 'fc'
+        fc_flag = self.topo_arrays[layer_id][11] == 'fc'
         return fc_flag
+
+    def get_ifm_bw(self, layer_id=0):
+        if not (self.topo_load_flag or self.num_layers - 1 < layer_id):
+            print("ERROR: topologies.get_layer_conv_flag: Invalid layer id")
+
+        ifm_bw = self.topo_arrays[layer_id][12]
+        return int(ifm_bw)
+
 
     def get_filter_size(self, layer_id=0):
         if not (self.topo_load_flag or self.num_layers - 1 < layer_id):

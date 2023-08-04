@@ -159,7 +159,6 @@ class operand_matrix(object):
     # i is the window index
     # j is the element index within the window
     def calc_ifmap_elem_addr(self, i, j):
-        offset = self.ifmap_offset
         ifmap_cols = self.ifmap_cols
         filter_col = self.filter_cols
         filter_row = self.filter_rows
@@ -194,7 +193,7 @@ class operand_matrix(object):
                 # Change this to corresponding ifmap row col for the start of the conv window
                 i_row = ofmap_row * r_stride - self.pad_t + row_idx
                 i_col = ofmap_col * c_stride - self.pad_l + col_idx
-                return i_row * ifmap_cols * channel + i_col * channel + channel_idx + offset
+                return i_row * ifmap_cols * channel + i_col * channel + channel_idx
         else:
             # depthwise conv
 
@@ -218,7 +217,7 @@ class operand_matrix(object):
                 # Change this to corresponding ifmap row col for the start of the conv window
                 i_row = ofmap_row * r_stride - self.pad_t + row_idx
                 i_col = ofmap_col * c_stride - self.pad_l + col_idx
-                return i_row * ifmap_cols * channel + i_col * channel + channel_idx + offset
+                return i_row * ifmap_cols * channel + i_col * channel + channel_idx
 
     # creates the ofmap operand
     def create_ofmap_matrix(self):
@@ -236,10 +235,9 @@ class operand_matrix(object):
 
     # logic to translate ofmap into matrix resulting systolic array MACs
     def calc_ofmap_elem_addr(self, i, j):
-        offset = self.ofmap_offset
         num_filt = self.num_filters
         internal_address = num_filt * i + j
-        ofmap_px_addr = internal_address + offset
+        ofmap_px_addr = internal_address
         return ofmap_px_addr
 
     # creates the filter operand
@@ -259,17 +257,16 @@ class operand_matrix(object):
 
     # logic to translate filter into matrix fed into systolic array MACs
     def calc_filter_elem_addr(self, i, j):
-        offset = self.filter_offset
         filter_row = self.filter_rows
         filter_col = self.filter_cols
         channel = self.num_input_channels
 
         if not self.dw_flag:
             internal_address = j * filter_row * filter_col * channel + i
-            filter_px_addr = internal_address + offset
+            filter_px_addr = internal_address
         else:
             internal_address = j * filter_row * filter_col + i
-            filter_px_addr = internal_address + offset
+            filter_px_addr = internal_address
         return filter_px_addr
 
     # function to get a part or the full ifmap operand

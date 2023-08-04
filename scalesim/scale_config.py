@@ -14,9 +14,9 @@ class scale_config:
         self.num_core = 4
         self.array_rows = 4
         self.array_cols = 4
-        self.ifmap_sz_kb = 256
-        self.filter_sz_kb = 256
-        self.ofmap_sz_kb = 128
+        self.ifmap_sz_b = 256
+        self.filter_sz_b = 256
+        self.ofmap_sz_b = 128
         self.df = 'ws'
         self.ifmap_offset = 0
         self.filter_offset = 10000000
@@ -57,54 +57,19 @@ class scale_config:
         self.num_core = int(config.get(section, 'NumCore'))
         self.array_rows = int(config.get(section, 'ArrayHeight'))
         self.array_cols = int(config.get(section, 'ArrayWidth'))
-        self.ifmap_sz_kb = int(config.get(section, 'ifmapsramszkB'))
-        self.filter_sz_kb = int(config.get(section, 'filtersramszkB'))
-        self.ofmap_sz_kb = int(config.get(section, 'ofmapsramszkB'))
-        self.ifmap_offset = int(config.get(section, 'IfmapOffset'))
-        self.filter_offset = int(config.get(section, 'FilterOffset'))
-        self.ofmap_offset = int(config.get(section, 'OfmapOffset'))
-        self.df = config.get(section, 'Dataflow')
-        self.memory_banks = int(config.get(section, 'MemoryBanks').strip())
+        self.ifmap_sz_b = int(config.get(section, 'ifmapsramszB'))
+        self.filter_sz_b = int(config.get(section, 'filtersramszB'))
+        self.ofmap_sz_b = int(config.get(section, 'ofmapsramszB'))
 
         # Anand: ISSUE #2. Patch
         if self.use_user_bandwidth:
-            self.bandwidths = [int(x.strip())
-                               for x in config.get(section, 'Bandwidth').strip().split(',')]
+            self.bandwidths = int(config.get(section, 'Bandwidth'))
+        else:
+            raise ValueError("Not supported yet, please use 'user' mode")
 
-            # Anand: ISSUE #12. Fix
-            assert self.memory_banks == len(self.bandwidths), \
-                'In USER mode bandwidths for each memory bank is a required input'
-
-        if self.df not in self.valid_df_list:
-            print("WARNING: Invalid dataflow")
-
-        # Anand: Added the memory bank check to avoid stray errors
-        if self.memory_banks > 1:
-            section = 'memory_map_files'
-            if not os.path.exists(config.get(section, 'MemoryMapIfmap')):
-                print("Ifmap file does not exist")
-                sys.exit(-1)
-            ifmap_mem_map_file = config.get(section, 'MemoryMapIfmap')
-
-            if not os.path.exists(config.get(section, 'MemoryMapFilter')):
-                print("Filter file does not exist")
-                sys.exit(-1)
-            filter_mem_map_file = config.get(section, 'MemoryMapFilter')
-
-            if not os.path.exists(config.get(section, 'MemoryMapOfmap')):
-                print("Ofmap file does not exist")
-                sys.exit(-1)
-
-            ofmap_mem_map_file = config.get(section, 'MemoryMapOfmap')
-
-            self.memory_map.set_params(num_banks=self.memory_banks,
-                                       ifmap_map_file=ifmap_mem_map_file,
-                                       filter_map_file=filter_mem_map_file,
-                                       ofmap_map_file=ofmap_mem_map_file
-                                       )
-        elif self.memory_banks == 1:
-            self.memory_map.set_single_bank_params( filter_offset=self.filter_offset,
-                                                    ofmap_offset=self.ofmap_offset)
+        # elif self.memory_banks == 1:
+        self.memory_map.set_single_bank_params( filter_offset=self.filter_offset,
+                                                ofmap_offset=self.ofmap_offset)
 
         if config.has_section('network_presets'):  # Read network_presets
             self.topofile = config.get(section, 'TopologyCsvLoc').split('"')[1]
@@ -121,9 +86,9 @@ class scale_config:
         self.num_core = int(conf_list[1])
         self.array_rows = int(conf_list[2])
         self.array_cols = int(conf_list[3])
-        self.ifmap_sz_kb = int(conf_list[4])
-        self.filter_sz_kb = int(conf_list[5])
-        self.ofmap_sz_kb = int(conf_list[6])
+        self.ifmap_sz_b = int(conf_list[4])
+        self.filter_sz_b = int(conf_list[5])
+        self.ofmap_sz_b = int(conf_list[6])
         self.ifmap_offset = int(conf_list[7])
         self.filter_offset = int(conf_list[8])
         self.ofmap_offset = int(conf_list[9])
@@ -175,9 +140,9 @@ class scale_config:
         config.set(section, 'ArrayHeight', str(self.array_rows))
         config.set(section, 'ArrayWidth', str(self.array_cols))
 
-        config.set(section, 'ifmapsramszkB', str(self.ifmap_sz_kb))
-        config.set(section, 'filtersramszkB', str(self.filter_sz_kb))
-        config.set(section, 'ofmapsramszkB', str(self.ofmap_sz_kb))
+        config.set(section, 'ifmapsramszB', str(self.ifmap_sz_b))
+        config.set(section, 'filtersramszB', str(self.filter_sz_b))
+        config.set(section, 'ofmapsramszB', str(self.ofmap_sz_b))
 
         config.set(section, 'IfmapOffset', str(self.ifmap_offset))
         config.set(section, 'FilterOffset', str(self.filter_offset))
@@ -219,10 +184,10 @@ class scale_config:
         self.df = dataflow
 
     #
-    def set_buffer_sizes_kb(self, ifmap_size_kb=1, filter_size_kb=1, ofmap_size_kb=1):
-        self.ifmap_sz_kb = ifmap_size_kb
-        self.filter_sz_kb = filter_size_kb
-        self.ofmap_sz_kb = ofmap_size_kb
+    def set_buffer_sizes(self, ifmap_size_b=1, filter_size_b=1, ofmap_size_b=1):
+        self.ifmap_sz_b = ifmap_size_b
+        self.filter_sz_b = filter_size_b
+        self.ofmap_sz_b = ofmap_size_b
 
     #
     def set_topology_file(self, topofile=''):
@@ -271,9 +236,9 @@ class scale_config:
         out_list.append(str(self.array_rows))
         out_list.append(str(self.array_cols))
 
-        out_list.append(str(self.ifmap_sz_kb))
-        out_list.append(str(self.filter_sz_kb))
-        out_list.append(str(self.ofmap_sz_kb))
+        out_list.append(str(self.ifmap_sz_b))
+        out_list.append(str(self.filter_sz_b))
+        out_list.append(str(self.ofmap_sz_b))
 
         out_list.append(str(self.ifmap_offset))
         out_list.append(str(self.filter_offset))
@@ -328,7 +293,7 @@ class scale_config:
             message += 'Config is not valid. Not returning any values'
             return
 
-        return self.ifmap_sz_kb, self.filter_sz_kb, self.ofmap_sz_kb
+        return self.ifmap_sz_b, self.filter_sz_b, self.ofmap_sz_b
 
     def get_offsets(self):
         if self.valid_conf_flag:
@@ -336,7 +301,7 @@ class scale_config:
 
     def get_bandwidths_as_string(self):
         if self.valid_conf_flag:
-            return ','.join([str(x) for x in self.bandwidths])
+            return str(self.bandwidths)
 
     def get_mem_banks(self):
         if self.valid_conf_flag:
