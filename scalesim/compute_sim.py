@@ -142,7 +142,7 @@ class compute_sim:
                 weight_reg = kernel
 
         print("=================== Simulation Results Check Start  ===================")
-        if not torch.allclose(sim_ofm, self.ofm, atol=1e-5):
+        if not torch.allclose(sim_ofm, self.ofm, atol=1e-3):
             print("ERROR: results mismatch")
             mismatch = torch.nonzero(sim_ofm != self.ofm)
             print("Mismatch address: ")

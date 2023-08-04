@@ -216,9 +216,9 @@ class npu_compute_conv:
     def create_demand_matrices(self):
         assert self.params_set_flag, 'Parameters are not set'
 
-        self.create_ifmap_demand_mat()
+        self.create_fmap_demand_mat()
         self.create_filter_demand_mat()
-        self.create_ofmap_demand_mat()
+        # self.create_ofmap_demand_mat()
 
         assert self.ifmap_demand_matrix.shape[0] == self.filter_demand_matrix.shape[0], 'IFMAP and Filter demands out of sync'
         assert self.ofmap_demand_matrix.shape[0] == self.filter_demand_matrix.shape[0], 'OFMAP and Filter demands out of sync'
@@ -231,13 +231,15 @@ class npu_compute_conv:
         self.demand_mat_ready_flag = True
 
     # IFM demand matrix
-    def create_ifmap_demand_mat(self):
+    def create_fmap_demand_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
         # clock cycles for weights to be loaded (one clock cycle)
-        inter_fold_gap_prefix_mat = (np.ones((1, self.num_pe)) * -1).tolist()[0]
+        inter_fold_gap_prefix_ifm = (np.ones((1, self.num_pe)) * -1).tolist()[0]
+        inter_fold_gap_prefix_ofm = (np.ones((1, self.num_core * self.arr_row)) * -1).tolist()[0]
         # one clock cycle for the first set of filter weights to be loaded
-        ifmap_compute_matrix = [inter_fold_gap_prefix_mat]
+        ifmap_compute_matrix = [inter_fold_gap_prefix_ifm]
+        ofmap_demand_matrix = [inter_fold_gap_prefix_ofm]
         # set is faster than list
         ifmap_compute_set = [{-1}]
         self.compute_utility_per_fold.append(0)
@@ -245,11 +247,11 @@ class npu_compute_conv:
         for i in range(self.filter_fold):
             for j in range(self.out_px_fold):
                 num_out_ch_to_process = min(self.num_out_ch_per_group, self.Sc - i * self.num_out_ch_per_group)
-                for _ in range(math.ceil(num_out_ch_to_process / self.num_filters_per_step)):
+                for out_ch_step in range(math.ceil(num_out_ch_to_process / self.num_filters_per_step)):
                     for k in range(self.window_fold):
                         for step in range(self.width_step):
                             # ==============================================================
-                            # Prepare IFM data
+                            # Prepare IFM/OFM data
                             # ==============================================================
                             
                             # start_row_idx is the index of the first processed OFM element in this step
@@ -261,6 +263,7 @@ class npu_compute_conv:
                             start_col_idx = k * self.num_in_ch_per_step
 
                             ifm_to_process = []
+                            ofm_to_process = []
 
                             # process two rows at a time
                             for px_v in range(self.num_out_h_per_step):
@@ -287,7 +290,22 @@ class npu_compute_conv:
                                         ifm_row += this_
                                     ifm_to_process.append(ifm_row)
 
-                            this_fold_demand = (np.ones((self.num_core, self.arr_row * self.arr_col)) * -1).tolist()
+                                    if self.filter_mm == 'unicast':
+                                        for c in range(self.num_core):
+                                            start_out_ch_idx = i * self.num_out_ch_per_group + \
+                                                    out_ch_step * self.num_filters_per_step + \
+                                                    c * self.num_filters_per_core
+                                            if start_out_ch_idx >= self.Sc:
+                                                break
+                                            end_out_ch_idx = min(start_out_ch_idx + self.num_filters_per_core, self.Sc)
+                                            ofm_to_process.append(self.ofmap_op_mat[row_idx, start_out_ch_idx: end_out_ch_idx])
+                                    elif self.filter_mm == 'broadcast':
+                                        start_out_ch_idx = i * self.num_out_ch_per_group + out_ch_step * self.num_filters_per_step
+                                        if start_out_ch_idx >= self.Sc:
+                                            break
+                                        end_out_ch_idx = min(start_out_ch_idx + self.num_filters_per_step, self.Sc)
+                                        ofm_to_process.append(self.ofmap_op_mat[row_idx, start_out_ch_idx: end_out_ch_idx])
+
                             num_rows_to_process = len(ifm_to_process)
                             num_cols_to_process = len(ifm_to_process[0])
 
@@ -297,42 +315,51 @@ class npu_compute_conv:
                             # ==============================================================
                             # Fill MAC cores
                             # ==============================================================
+
+                            this_ifm_demand = (np.ones((self.num_core, self.arr_row * self.arr_col)) * -1).tolist()
+                            this_ofm_demand = (np.ones((self.num_core, self.arr_row)) * -1).tolist()
                             mac_used = 0
                             for c in range(self.num_core):
                                 for f in range(self.num_filters_per_core):
                                     start_idx = f * self.num_rows_per_filter * self.arr_col
                                     end_idx = start_idx + num_cols_to_process
-
-                                    window_idx = c * self.num_filters_per_core + f
-                                    if f >= self.Sc - i * self.num_out_ch_per_group - _ * self.num_filters_per_step:
+                                    if f >= self.Sc - i * self.num_out_ch_per_group - out_ch_step * self.num_filters_per_step:
                                         break
 
                                     if self.ifm_mm == 'unicast':
                                         if c < num_rows_to_process:
-                                            this_ifm = ifm_to_process[int(window_idx / self.num_filters_per_core)]
+                                            this_ifm = ifm_to_process[c]
+                                            this_ofm = ofm_to_process[c][f]
                                             # count how many MACs are used
                                             mac_used += num_cols_to_process
                                             # Unlike other convolutions, inside each core, IFM mode is broadcast
-                                            this_fold_demand[c][start_idx: end_idx] = this_ifm
+                                            this_ifm_demand[c][start_idx: end_idx] = this_ifm
+                                            this_ofm_demand[c][start_idx // self.arr_col] = this_ofm
                                     elif self.ifm_mm == 'broadcast':
-                                        # TODO: what if there are less than 'num_core' filters?
+                                        # There are less than 'num_core' filters
+                                        if c >= len(ofm_to_process):
+                                            break
                                         this_ifm = ifm_to_process[0]
                                         mac_used += num_cols_to_process
-                                        this_fold_demand[c][start_idx: end_idx] = this_ifm
+                                        this_ifm_demand[c][start_idx: end_idx] = this_ifm
+                                        this_ofm_demand[c][start_idx // self.arr_col] = ofm_to_process[c][f]
                                     else:
                                         raise ValueError("Currently only support unicast/broadcast IFM mapping mode")
-                            this_fold_demand = [j for sub in this_fold_demand for j in sub]
+                            # flatten to 1D
+                            this_ifm_demand = [j for sub in this_ifm_demand for j in sub]
+                            this_ofm_demand = [j for sub in this_ofm_demand for j in sub]
 
                             # calculate the overall utilization of the current compute cycle
                             this_mac_util = mac_used / self.num_pe
 
-                            ifmap_compute_matrix.append(this_fold_demand)
-                            this_set = {s for s in this_fold_demand}
+                            ifmap_compute_matrix.append(this_ifm_demand)
+                            ofmap_demand_matrix.append(this_ofm_demand)
+                            this_set = {s for s in this_ifm_demand}
                             ifmap_compute_set.append(this_set)
                             self.compute_utility_per_fold.append(this_mac_util)
 
         # ==============================================================
-        # Create demand matrix
+        # Create IFM SRAM demand matrix
         # ==============================================================
 
         # remove reused elements for each cycle because our NPU can ensure that reused elements stay in buffer
@@ -351,7 +378,9 @@ class npu_compute_conv:
 
         self.ifmap_compute_matrix = np.array(ifmap_compute_matrix)
         self.ifmap_demand_matrix = np.array(ifmap_demand_matrix)
+        self.ofmap_demand_matrix = np.array(ofmap_demand_matrix)
 
+    # Filter demand matrix
     def create_filter_demand_mat(self):
         assert self.params_set_flag, 'Parameters are not set'
 
@@ -359,123 +388,78 @@ class npu_compute_conv:
         inter_fold_gap_postfix_mat = (np.ones((1, self.num_pe)) * -1).tolist()[0]
 
         for i in range(self.filter_fold):
-            for _ in range(self.out_px_fold):
-                for j in range(self.out_ch_fold):
-                    for k in range(self.window_fold):
-                        start_col_idx = i * self.num_out_ch_per_group + j * self.num_filters_per_step
-                        start_row_idx = k * self.num_in_ch_per_step
+            for out_r in range(self.out_row_fold):
+                for out_c in range(self.out_col_fold):
+                    for j in range(self.out_ch_fold):
+                        for k in range(self.window_fold):
+                            start_col_idx = i * self.num_out_ch_per_group + j * self.num_filters_per_step
+                            start_row_idx = k * self.num_in_ch_per_step
 
-                        # ==============================================================
-                        # Prepare Filter data
-                        # ==============================================================
+                            # ==============================================================
+                            # Prepare Filter data
+                            # ==============================================================
 
-                        filter_to_process = []
-                        used_cores = 0
-                        if self.filter_mm == 'unicast':
-                            used_cores = self.num_core
-                        elif self.filter_mm == 'broadcast':
-                            used_cores = 1
-                        for c in range(used_cores):
-                            this_filter_col = []
-                            for f in range(self.num_filters_per_core):
-                                col_idx = start_col_idx + c * self.num_filters_per_core + f
-                                if col_idx >= self.Sc:
-                                    break
-                                filter_col = []
-                                for p in range(self.filter_size):
-                                    row_idx = start_row_idx + p * self.num_in_ch
-                                    max_row_idx = start_row_idx + p * self.num_in_ch + self.num_in_ch
-                                    end_row_idx = min(start_row_idx + p * self.num_in_ch + self.num_in_ch_per_step, max_row_idx)
-                                    this_ = self.filter_op_mat[row_idx: end_row_idx, col_idx].reshape((1, -1)).tolist()[0]
-                                    filter_col += this_
-                                this_filter_col.append(filter_col)
-                            filter_to_process.append(this_filter_col)
+                            filter_to_process = []
+                            used_cores = 0
+                            if self.filter_mm == 'unicast':
+                                used_cores = self.num_core
+                            elif self.filter_mm == 'broadcast':
+                                used_cores = 1
+                            for c in range(used_cores):
+                                this_filter_col = []
+                                for f in range(self.num_filters_per_core):
+                                    col_idx = start_col_idx + c * self.num_filters_per_core + f
+                                    if col_idx >= self.Sc:
+                                        break
+                                    filter_col = []
+                                    for p in range(self.filter_size):
+                                        row_idx = start_row_idx + p * self.num_in_ch
+                                        max_row_idx = start_row_idx + p * self.num_in_ch + self.num_in_ch
+                                        end_row_idx = min(start_row_idx + p * self.num_in_ch + self.num_in_ch_per_step, max_row_idx)
+                                        this_ = self.filter_op_mat[row_idx: end_row_idx, col_idx].reshape((1, -1)).tolist()[0]
+                                        filter_col += this_
+                                    this_filter_col.append(filter_col)
+                                if len(this_filter_col) != 0:
+                                    filter_to_process.append(this_filter_col)
 
-                        this_fold_demand = (np.ones((self.num_core, self.arr_row * self.arr_col)) * -1).tolist()
+                            this_fold_demand = (np.ones((self.num_core, self.arr_row * self.arr_col)) * -1).tolist()
 
-                        num_rows_to_process = len(filter_to_process)
-                        num_cols_to_process_per_core = len(filter_to_process[0][0])
+                            num_rows_to_process = len(filter_to_process)
+                            if not any(filter_to_process):
+                                break
+                            num_cols_to_process_per_core = len(filter_to_process[0][0])
 
-                        # for row in filter_to_process:
-                        #     assert len(row) == num_cols_to_process_per_core, 'Filter demand matrix is not a rectangle'
+                            # for row in filter_to_process:
+                            #     assert len(row) == num_cols_to_process_per_core, 'Filter demand matrix is not a rectangle'
 
-                        # ==============================================================
-                        # Fill MAC cores
-                        # ==============================================================
+                            # ==============================================================
+                            # Fill MAC cores
+                            # ==============================================================
 
-                        for c in range(self.num_core):
-                            for f in range(self.num_filters_per_core):
-                                start_idx = f * self.num_rows_per_filter * self.arr_col
-                                end_idx = start_idx + num_cols_to_process_per_core
+                            for c in range(self.num_core):
+                                for f in range(self.num_filters_per_core):
+                                    start_idx = f * self.num_rows_per_filter * self.arr_col
+                                    end_idx = start_idx + num_cols_to_process_per_core
 
-                                window_idx = c * self.num_filters_per_core + f
-
-                                if self.filter_mm == 'unicast':
-                                    if c < num_rows_to_process:
+                                    if self.filter_mm == 'unicast':
+                                        if c >= num_rows_to_process:
+                                            break
                                         this_filter = filter_to_process[c][f]
                                         this_fold_demand[c][start_idx: end_idx] = this_filter
-                                elif self.filter_mm == 'broadcast':
-                                    this_filter = filter_to_process[0][f]
-                                    this_fold_demand[c][start_idx: end_idx] = this_filter
-                                else:
-                                    raise ValueError("Currently only support unicast/broadcast filter mapping mode")
-                        this_fold_demand = [j for sub in this_fold_demand for j in sub]
-                        filter_demand_matrix.append(this_fold_demand)
+                                    elif self.filter_mm == 'broadcast':
+                                        this_filter = filter_to_process[0][f]
+                                        this_fold_demand[c][start_idx: end_idx] = this_filter
+                                    else:
+                                        raise ValueError("Currently only support unicast/broadcast filter mapping mode")
+                            this_fold_demand = [j for sub in this_fold_demand for j in sub]
+                            filter_demand_matrix.append(this_fold_demand)
 
-                        # FIXME, sometime less than width_step - 1
-                        for __ in range(self.width_step - 1):
-                            filter_demand_matrix.append(inter_fold_gap_postfix_mat)
+                            for step in range(self.width_step - 1):
+                                if out_c * (self.num_out_w_per_step * self.width_step) + (step + 1) * self.num_out_w_per_step >= self.out_col:
+                                    break
+                                filter_demand_matrix.append(inter_fold_gap_postfix_mat)
         filter_demand_matrix.append(inter_fold_gap_postfix_mat)
         self.filter_demand_matrix = np.array(filter_demand_matrix)
-
-    def create_ofmap_demand_mat(self):
-
-        ofmap_demand_matrix = []
-
-        num_row = self.num_core * self.arr_row
-        opx_stride = num_row // (self.num_filters_per_step * self.num_out_px_per_step)
-
-        ofmap_demand_row = [-1] * num_row
-        ofmap_demand_matrix.append(ofmap_demand_row)
-
-        for idx_f in range(self.filter_fold):
-            this_out_ch = min((idx_f + 1) * self.num_out_ch_per_group, self.Sc) - idx_f * self.num_out_ch_per_group
-            for idx_oh in range(self.out_row_fold):
-                this_out_h = min((idx_oh + 1) * self.num_out_h_per_step,
-                                 self.out_row) - idx_oh * self.num_out_h_per_step
-                for idx_ow in range(self.out_col_fold):
-                    this_out_w_per_group = min((idx_ow + 1) * (self.width_step * self.num_out_w_per_step),
-                                               self.out_col) - idx_ow * (self.width_step * self.num_out_w_per_step)
-                    out_ch_fold = math.ceil(this_out_ch / self.num_filters_per_step)
-                    for idx_oc in range(out_ch_fold):
-                        this_num_filters = min((idx_oc + 1) * self.num_filters_per_step,
-                                               this_out_ch) - idx_oc * self.num_filters_per_step
-                        for idx_wd in range(self.window_fold):
-                            this_window_row = min((idx_wd + 1) * self.window_row, self.Sr) - idx_wd * self.window_row
-
-                            # ofmap_demand_row = [-1] * num_row
-                            # ofmap_demand_matrix.append(ofmap_demand_row)
-
-                            out_w_step_fold = math.ceil(this_out_w_per_group / self.num_out_w_per_step)
-                            for idx_ws in range(out_w_step_fold):
-                                this_out_w = min((idx_ws + 1) * self.num_out_w_per_step,
-                                                 this_out_w_per_group) - idx_ws * self.num_out_w_per_step
-                                ofmap_demand_row = [-1] * num_row
-                                for opx_h in range(this_out_h):
-                                    for opx_w in range(this_out_w):
-                                        for opx_c in range(this_num_filters):
-                                            ofmap_demand_row[(opx_c + (opx_w + opx_h * self.num_out_w_per_step) *
-                                                              self.num_filters_per_step) * opx_stride] = \
-                                                opx_c + (opx_w + opx_h * self.out_col) * self.Sc + \
-                                                idx_ws * self.Sc * self.num_out_w_per_step + \
-                                                idx_ow * self.Sc * self.num_out_w_per_step * self.width_step + \
-                                                idx_oh * self.Sc * self.out_col * self.num_out_h_per_step + \
-                                                idx_oc * self.num_filters_per_step + idx_f * self.num_out_ch_per_group
-                                ofmap_demand_matrix.append(ofmap_demand_row)
-
-        self.ofmap_demand_matrix = np.array(ofmap_demand_matrix)
-
-    # END of OFMAP demand generation
 
     #
     def get_ifmap_prefetch_mat(self):
@@ -592,38 +576,3 @@ class npu_compute_conv:
         assert self.demand_mat_ready_flag, 'Traces not generated yet'
         np.savetxt(filename, self.filter_demand_matrix, fmt='%d', delimiter=",")
 
-#
-def skew_matrix(input_matrix_np):
-    rows = input_matrix_np.shape[0]
-    cols = input_matrix_np.shape[1]
-
-    out_matrix_np = np.zeros((1,1))
-    for c in range(cols):
-        if c == 0:
-            # Comments from xyin:
-            # each column represents the IFM data needed by each systolic row.
-            # the first column has no data in the last row-1 clock cycles
-            down_padding = -1 * np.ones((cols-1, 1))
-            mat_col = input_matrix_np[:,c].reshape((rows,1))
-            out_matrix_np = np.concatenate((mat_col, down_padding), axis=0)
-
-        else:
-            if c == cols -1:
-                up_padding = -1 * np.ones((cols-1, 1))
-                mat_col = input_matrix_np[:, c].reshape((rows, 1))
-
-                this_col = np.concatenate((up_padding, mat_col), axis=0)
-                out_matrix_np = np.concatenate((out_matrix_np, this_col), axis=1)
-
-            else:
-                # Comments from xyin:
-                # other systolic rows receive data with some delays (= c),
-                # and also have no data in the last row-1 clock cycles
-                up_padding = -1 * np.ones((c, 1))
-                mat_col = input_matrix_np[:, c].reshape((rows, 1))
-                down_padding = -1 * np.ones((cols - c-1, 1))
-
-                this_col = np.concatenate((up_padding, mat_col, down_padding), axis=0)
-                out_matrix_np = np.concatenate((out_matrix_np, this_col), axis=1)
-
-    return out_matrix_np
