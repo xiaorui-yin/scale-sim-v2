@@ -26,7 +26,7 @@ class npu_compute_conv:
 
         self.out_col = 0
         self.out_row = 0
-        self.window_row = 0
+        self.window_part_size = 0
 
         self.num_core = 0
         self.arr_row = 0
@@ -128,8 +128,8 @@ class npu_compute_conv:
         if filter_size == 1:
             self.num_in_ch_per_step = 16
 
-        self.window_row = self.filter_size * self.num_in_ch_per_step
-        self.num_rows_per_filter = int(math.pow(2, math.ceil(math.log2(self.window_row / self.arr_col))))
+        self.window_part_size = self.filter_size * self.num_in_ch_per_step
+        self.num_rows_per_filter = int(math.pow(2, math.ceil(math.log2(self.window_part_size / self.arr_col))))
         assert self.num_rows_per_filter <= self.arr_row, 'Single filter cannot exceed one core'  # TODO first_layer_7x7
 
         self.num_filters_per_core = self.arr_row // self.num_rows_per_filter
@@ -167,7 +167,7 @@ class npu_compute_conv:
 
         self.width_step = width_step // self.num_out_w_per_step
 
-        self.window_fold = math.ceil(self.Sr / self.window_row)
+        self.window_fold = math.ceil(self.Sr / self.window_part_size)
         self.out_row_fold = math.ceil(self.out_row / self.num_out_h_per_step)
         self.out_col_fold = math.ceil(self.out_col / (self.num_out_w_per_step * self.width_step))
         self.out_px_fold = math.ceil(self.out_row_fold * self.out_col_fold)
@@ -389,7 +389,7 @@ class npu_compute_conv:
                     for j in range(self.out_ch_fold):
                         for k in range(self.window_fold):
                             start_col_idx = i * self.num_out_ch_per_group + j * self.num_filters_per_step
-                            start_row_idx = k * self.num_in_ch_per_step
+                            start_in_ch = k * self.num_in_ch_per_step
 
                             # ==============================================================
                             # Prepare Filter data
@@ -409,9 +409,9 @@ class npu_compute_conv:
                                         break
                                     filter_col = []
                                     for p in range(self.filter_size):
-                                        row_idx = start_row_idx + p * self.num_in_ch
-                                        max_row_idx = start_row_idx + p * self.num_in_ch + self.num_in_ch
-                                        end_row_idx = min(start_row_idx + p * self.num_in_ch + self.num_in_ch_per_step, max_row_idx)
+                                        row_idx = start_in_ch + p * self.num_in_ch
+                                        max_row_idx = p * self.num_in_ch + self.num_in_ch
+                                        end_row_idx = min(start_in_ch + p * self.num_in_ch + self.num_in_ch_per_step, max_row_idx)
                                         this_ = self.filter_op_mat[row_idx: end_row_idx, col_idx].reshape((1, -1)).tolist()[0]
                                         filter_col += this_
                                     this_filter_col.append(filter_col)
