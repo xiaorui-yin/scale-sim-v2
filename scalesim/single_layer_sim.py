@@ -184,11 +184,6 @@ class single_layer_sim:
                 word_size = 1           # bytes, this can be incorporated in the config file
                 active_buf_frac = 0.5   # This can be incorporated in the config as well
 
-                ifmap_buf_size_b, filter_buf_size_b, ofmap_buf_size_b = self.config.get_mem_sizes()
-                ifmap_buf_size_bytes = ifmap_buf_size_b
-                filter_buf_size_bytes = filter_buf_size_b * 2
-                ofmap_buf_size_bytes = ofmap_buf_size_b
-
                 ifmap_backing_bw = 1
                 filter_backing_bw = 1
                 ofmap_backing_bw = 1
@@ -208,6 +203,15 @@ class single_layer_sim:
                     ifmap_backing_bw = 10
                     filter_backing_bw = 10
                     ofmap_backing_bw = num_cores * arr_col
+
+                ifmap_buf_size_b, filter_buf_size_b, ofmap_buf_size_b = self.config.get_mem_sizes()
+                ifmap_buf_size_bytes = ifmap_buf_size_b
+                filter_buf_size_bytes = filter_buf_size_b * 2
+                ofmap_buf_size_bytes = ofmap_buf_size_b
+
+                ifmap_buf_size_bytes = 2 * ifmap_backing_bw
+                filter_buf_size_bytes = 2 * filter_backing_bw
+                # ofmap_buf_size_bytes = ofmap_buf_size_b
 
                 self.memory_system.set_params(
                         word_size=word_size,

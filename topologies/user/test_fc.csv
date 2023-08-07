@@ -1,2 +1,9 @@
-Layer name, IFMAP Height, IFMAP Width, Filter Height, Filter Width, Channels, Num Filter, Strides, Paddings, IFMAP Mapping Mode, Filter Mapping Mode, Depthwise
-MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, 1, [0 0 0 0], unicast, broadcast, fc,
+Layer name, IFMAP Height, IFMAP Width, Filter Height, Filter Width, Channels, Num Filter, Strides(HW), Paddings(TRBL), IFMAP Mapping Mode, Filter Mapping Mode, Type, ifm_bw_frac
+MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, [1 1], [0 0 0 0], broadcast, unicast, conv, 128,
+MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, [1 1], [0 0 0 0], broadcast, unicast, conv, 96,
+MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, [1 1], [0 0 0 0], broadcast, unicast, conv, 64,
+MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, [1 1], [0 0 0 0], broadcast, unicast, conv, 32,
+MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, [1 1], [0 0 0 0], broadcast, unicast, fc, 128,
+MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, [1 1], [0 0 0 0], broadcast, unicast, fc, 96,
+MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, [1 1], [0 0 0 0], broadcast, unicast, fc, 64,
+MobileNetV2_13, 1, 1, 1, 1, 1280, 1000, [1 1], [0 0 0 0], broadcast, unicast, fc, 32,
