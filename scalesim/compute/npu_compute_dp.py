@@ -213,6 +213,7 @@ class npu_compute_dp:
                 # ==============================================================
                 # Prepare IFM data
                 # ==============================================================
+                start_row_idx = 0
                 if self.dw_flag:
                     if self.Sr == 9:
                         # depthwise 3x3: work on 2x2 output pixels at a time
@@ -241,6 +242,7 @@ class npu_compute_dp:
                 else:
                     self.num_out_w_per_step = 1
                     start_row_idx = j * self.num_out_px_per_step
+                    print("Warning: running convolutions except depthwise with npu_compute_dp is deprecated, please use npu_compute_conv.")
                 end_row_idx = min(start_row_idx + self.num_out_px_per_step, self.T)
 
                 # Remaining filters to be processed
@@ -544,38 +546,3 @@ class npu_compute_dp:
 
         return self.num_filters_per_core
 
-#
-def skew_matrix(input_matrix_np):
-    rows = input_matrix_np.shape[0]
-    cols = input_matrix_np.shape[1]
-
-    out_matrix_np = np.zeros((1,1))
-    for c in range(cols):
-        if c == 0:
-            # Comments from xyin:
-            # each column represents the IFM data needed by each systolic row.
-            # the first column has no data in the last row-1 clock cycles
-            down_padding = -1 * np.ones((cols-1, 1))
-            mat_col = input_matrix_np[:,c].reshape((rows,1))
-            out_matrix_np = np.concatenate((mat_col, down_padding), axis=0)
-
-        else:
-            if c == cols -1:
-                up_padding = -1 * np.ones((cols-1, 1))
-                mat_col = input_matrix_np[:, c].reshape((rows, 1))
-
-                this_col = np.concatenate((up_padding, mat_col), axis=0)
-                out_matrix_np = np.concatenate((out_matrix_np, this_col), axis=1)
-
-            else:
-                # Comments from xyin:
-                # other systolic rows receive data with some delays (= c),
-                # and also have no data in the last row-1 clock cycles
-                up_padding = -1 * np.ones((c, 1))
-                mat_col = input_matrix_np[:, c].reshape((rows, 1))
-                down_padding = -1 * np.ones((cols - c-1, 1))
-
-                this_col = np.concatenate((up_padding, mat_col, down_padding), axis=0)
-                out_matrix_np = np.concatenate((out_matrix_np, this_col), axis=1)
-
-    return out_matrix_np

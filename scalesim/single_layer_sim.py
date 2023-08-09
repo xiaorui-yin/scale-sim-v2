@@ -209,9 +209,10 @@ class single_layer_sim:
                 filter_buf_size_bytes = filter_buf_size_b * 2
                 ofmap_buf_size_bytes = ofmap_buf_size_b
 
+                # if ifmap_buf_size_bytes < 2 * ifmap_backing_bw:
                 ifmap_buf_size_bytes = 2 * ifmap_backing_bw
-                filter_buf_size_bytes = 2 * filter_backing_bw
-                # ofmap_buf_size_bytes = ofmap_buf_size_b
+                if filter_buf_size_bytes < 2 * filter_backing_bw or filter_buf_size_bytes % filter_backing_bw != 0:
+                    filter_buf_size_bytes = 2 * filter_backing_bw
 
                 self.memory_system.set_params(
                         word_size=word_size,

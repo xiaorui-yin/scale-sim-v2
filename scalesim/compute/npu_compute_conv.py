@@ -331,6 +331,7 @@ class npu_compute_conv:
                                             # Unlike other convolutions, inside each core, IFM mode is broadcast
                                             this_ifm_demand[c][start_idx: end_idx] = this_ifm
                                             this_ofm_demand[c][start_idx // self.arr_col] = this_ofm
+                                            self.ofmap_writes += 1
                                     elif self.ifm_mm == 'broadcast':
                                         # There are less than 'num_core' filters
                                         if c >= len(ofm_to_process):
@@ -339,6 +340,7 @@ class npu_compute_conv:
                                         mac_used += num_cols_to_process
                                         this_ifm_demand[c][start_idx: end_idx] = this_ifm
                                         this_ofm_demand[c][start_idx // self.arr_col] = ofm_to_process[c][f]
+                                        self.ofmap_writes += 1
                                     else:
                                         raise ValueError("Currently only support unicast/broadcast IFM mapping mode")
                             # flatten to 1D
